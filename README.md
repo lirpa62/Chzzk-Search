@@ -1,7 +1,17 @@
 # 치즈 서치 - Chzzk Search
 
 <div align="center">
-  <img src="./icon.png" width="128" height="128" alt="치즈 서치 아이콘">
+
+[![Chrome Web Store](https://img.shields.io/badge/Chrome-설치하기-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/mmcdopjdafojenfpidgohjbejlckageb)
+[![Edge Add-ons](https://img.shields.io/badge/Edge-설치하기-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/fbmmcpelagojjjmgekkagglgcdlenddp)
+[![Naver Whale Store](https://img.shields.io/badge/Whale-설치하기-00C73C?style=for-the-badge&logo=naver&logoColor=white)](https://store.whale.naver.com/detail/hibpggljdgdpkghfaiicjogkkalmfkmh)
+
+<br>
+
+![Chrome Web Store Users](https://img.shields.io/chrome-web-store/users/mmcdopjdafojenfpidgohjbejlckageb?style=for-the-badge&logo=googlechrome&logoColor=white&color=4285F4&label=Chrome%20Users)
+[![Edge Add-on Users](https://img.shields.io/badge/dynamic/json?style=for-the-badge&logo=microsoftedge&label=Edge%20Users&query=%24.activeInstallCount&url=https%3A%2F%2Fmicrosoftedge.microsoft.com%2Faddons%2Fgetproductdetailsbycrxid%2Ffbmmcpelagojjjmgekkagglgcdlenddp)](https://microsoftedge.microsoft.com/addons/detail/fbmmcpelagojjjmgekkagglgcdlenddp)
+[![Naver Whale Users](https://img.shields.io/endpoint?style=for-the-badge&logo=naver&logoColor=white&url=https%3A%2F%2Fgist.githubusercontent.com%2Flirpa62%2Ff0eb8e9a752ae058e6c2783d1a0b8056%2Fraw%2FChzzk-Search-Whale-Users.json)](https://store.whale.naver.com/detail/hibpggljdgdpkghfaiicjogkkalmfkmh)
+
 </div>
 
 치지직 채널의 다시보기와 클립을 검색하기 쉽게 만들어 주는 브라우저 확장 프로그램입니다. 채널의 `동영상` 탭과 `클립` 탭에 검색 도구를 추가하고, 별도 팝업 창에서는 스트리머 닉네임으로 다른 채널의 콘텐츠도 검색할 수 있습니다.
