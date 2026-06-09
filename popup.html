@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>치즈 서치</title>
+    <script src="src/themeInit.js"></script>
+    <link rel="stylesheet" href="src/popup.css" />
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="popup-header">
+        <div>
+          <h1>치즈 서치</h1>
+          <p id="popupSubtitle">다시보기 검색</p>
+        </div>
+        <div class="popup-header-actions">
+          <button
+            type="button"
+            class="popup-icon-button"
+            id="themeToggleButton"
+            aria-label="다크 모드로 전환"
+            aria-pressed="false"
+          >
+            <svg
+              class="popup-theme-icon popup-theme-icon-sun"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="4"
+                stroke="currentColor"
+                stroke-width="2"
+              ></circle>
+              <path
+                d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              ></path>
+            </svg>
+            <svg
+              class="popup-theme-icon popup-theme-icon-moon"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linejoin="round"
+              ></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="popup-icon-button"
+            id="refreshButton"
+            aria-label="새로고침"
+            title="새로고침"
+          >
+            <svg
+              class="popup-refresh-icon"
+              xmlns="http://www.w3.org/2000/svg"
+              width="22"
+              height="23"
+              viewBox="0 0 22 23"
+              fill="none"
+            >
+              <mask
+                id="mask_0145051526"
+                width="17"
+                height="17"
+                x="2"
+                y="3"
+                maskUnits="userSpaceOnUse"
+                style="mask-type: alpha"
+              >
+                <g clip-path="url(#clip_0145051526)">
+                  <path
+                    fill="#0E0F10"
+                    d="M16.956 5.498a.867.867 0 0 0-1.733 0v1.054a6.661 6.661 0 1 0 2.438 5.151.867.867 0 1 0-1.734 0 4.928 4.928 0 1 1-1.93-3.91H12.93a.867.867 0 0 0 0 1.732h3.16a.867.867 0 0 0 .867-.866v-3.16Z"
+                  ></path>
+                </g>
+              </mask>
+              <g mask="url(#mask_0145051526)">
+                <path fill="currentColor" d="M3 3.5h16v16H3z"></path>
+              </g>
+              <defs>
+                <clipPath id="clip_0145051526">
+                  <path fill="#fff" d="M3 3.5h16v16H3z"></path>
+                </clipPath>
+              </defs>
+            </svg>
+            <svg
+              class="popup-stop-icon"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <rect
+                x="6"
+                y="6"
+                width="12"
+                height="12"
+                rx="1.5"
+                fill="currentColor"
+              ></rect>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="popup-icon-button"
+            id="resetFiltersButton"
+            aria-label="필터 삭제"
+            title="필터 삭제"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M4 5h16l-6.4 7.3V18l-3.2 1.8v-7.5L4 5Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linejoin="round"
+              ></path>
+              <path
+                d="m16.5 15.5 4 4M20.5 15.5l-4 4"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              ></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <section class="popup-controls" aria-label="검색 조건">
+        <label class="popup-field popup-streamer-field">
+          <span>스트리머</span>
+          <div class="popup-streamer-search">
+            <svg
+              class="popup-streamer-search-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+            <input
+              id="streamerInput"
+              type="search"
+              placeholder="스트리머 닉네임"
+            />
+            <button
+              type="reset"
+              class="popup-search-reset-button"
+              data-search-reset="streamer"
+              hidden
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="15"
+                height="16"
+                viewBox="0 0 15 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  fill-rule="evenodd"
+                  d="M7.5 15.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Zm2.995-10.495a.7.7 0 0 0-.903-.074l-.087.074L7.5 7.01 5.495 5.005l-.087-.074a.7.7 0 0 0-.903 1.064L6.51 8l-2.005 2.005a.7.7 0 0 0 .903 1.064l.087-.074L7.5 8.99l2.005 2.005.087.074a.7.7 0 0 0 .903-1.064L8.49 8l2.005-2.005a.7.7 0 0 0 0-.99Z"
+                  clip-rule="evenodd"
+                  opacity="0.5"
+                ></path>
+              </svg>
+              <span class="blind">삭제</span>
+            </button>
+            <button
+              type="button"
+              class="popup-streamer-search-button"
+              id="streamerSearchButton"
+              aria-label="스트리머 확인"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M5 12h14m0 0-5-5m5 5-5 5"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+        </label>
+        <label class="popup-field">
+          <span>검색어</span>
+          <div class="popup-query-box">
+            <svg
+              class="popup-query-box-search-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="m21 21-4.3-4.3M10.8 18a7.2 7.2 0 1 1 0-14.4 7.2 7.2 0 0 1 0 14.4Z"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+              />
+            </svg>
+            <input
+              id="queryInput"
+              type="search"
+              placeholder="제목, #태그, @카테고리"
+            />
+            <button
+              type="reset"
+              class="popup-search-reset-button"
+              data-search-reset="query"
+              hidden
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="15"
+                height="16"
+                viewBox="0 0 15 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  fill="currentColor"
+                  fill-rule="evenodd"
+                  d="M7.5 15.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Zm2.995-10.495a.7.7 0 0 0-.903-.074l-.087.074L7.5 7.01 5.495 5.005l-.087-.074a.7.7 0 0 0-.903 1.064L6.51 8l-2.005 2.005a.7.7 0 0 0 .903 1.064l.087-.074L7.5 8.99l2.005 2.005.087.074a.7.7 0 0 0 .903-1.064L8.49 8l2.005-2.005a.7.7 0 0 0 0-.99Z"
+                  clip-rule="evenodd"
+                  opacity="0.5"
+                ></path>
+              </svg>
+              <span class="blind">삭제</span>
+            </button>
+            <button
+              type="button"
+              class="popup-help-button"
+              id="queryHelpButton"
+              aria-label="검색 방법 보기"
+              aria-expanded="false"
+              aria-controls="queryHelpPanel"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="9"
+                  stroke="currentColor"
+                  stroke-width="2"
+                ></circle>
+                <path
+                  d="M12 17v-5"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                ></path>
+                <path
+                  d="M12 8h.01"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                ></path>
+              </svg>
+            </button>
+            <div
+              class="popup-query-help"
+              id="queryHelpPanel"
+              role="tooltip"
+              hidden
+            >
+              <strong>검색 방법</strong>
+              <p><code>#태그</code>는 태그에서만 찾습니다.</p>
+              <p>
+                <code>@</code>, <code>category:</code>, <code>cat:</code>,
+                <code>카테고리:</code>는 카테고리에서만 찾습니다.
+              </p>
+              <p>
+                띄어쓰기나 빈칸이 포함된 카테고리는
+                <code>category:"메이플스토리 월드"</code>처럼 묶어 검색합니다.
+              </p>
+              <p><code>#태그1 | #태그2</code>, <code>#태그1 OR #태그2</code></p>
+              <p><code>#태그1 #태그2</code>, <code>#태그1 AND #태그2</code></p>
+              <p><code>-#태그</code>로 제외합니다.</p>
+              <p>
+                <code>(#태그1 | @카테고리) 제목</code>처럼 제목, 태그와 섞어 쓸
+                수 있습니다.
+              </p>
+            </div>
+          </div>
+        </label>
+        <label class="popup-field">
+          <span>시작일</span>
+          <div class="popup-date-picker" data-date-picker="dateFrom">
+            <input id="dateFromInput" type="hidden" />
+            <button
+              type="button"
+              class="popup-date-trigger"
+              data-action="date-toggle"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+            >
+              <span data-date-label="dateFrom">선택 안 함</span>
+            </button>
+            <div
+              class="popup-calendar"
+              role="dialog"
+              aria-label="시작일 선택"
+              hidden
+            >
+              <div class="popup-calendar-head">
+                <button
+                  type="button"
+                  class="popup-calendar-nav"
+                  data-calendar-action="prev"
+                  aria-label="이전 달"
+                >
+                  <svg
+                    class="popup-calendar-nav-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M15 5l-6 7 6 7"
+                      stroke="currentColor"
+                      stroke-width="2.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    ></path>
+                  </svg>
+                </button>
+                <strong data-calendar-title></strong>
+                <button
+                  type="button"
+                  class="popup-calendar-nav"
+                  data-calendar-action="next"
+                  aria-label="다음 달"
+                >
+                  <svg
+                    class="popup-calendar-nav-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M9 5l6 7-6 7"
+                      stroke="currentColor"
+                      stroke-width="2.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    ></path>
+                  </svg>
+                </button>
+              </div>
+              <div class="popup-calendar-presets" aria-label="빠른 기간 선택">
+                <button type="button" data-range-preset="week">
+                  최근 1주일
+                </button>
+                <button type="button" data-range-preset="month1">1개월</button>
+                <button type="button" data-range-preset="month3">3개월</button>
+                <button type="button" data-range-preset="month6">6개월</button>
+                <button type="button" data-range-preset="year1">1년</button>
+              </div>
+              <div class="popup-calendar-weekdays" aria-hidden="true">
+                <span>일</span><span>월</span><span>화</span><span>수</span
+                ><span>목</span><span>금</span><span>토</span>
+              </div>
+              <div class="popup-calendar-grid" data-calendar-grid></div>
+              <div class="popup-calendar-actions">
+                <button type="button" data-calendar-action="clear">
+                  초기화
+                </button>
+                <button type="button" data-calendar-action="close">닫기</button>
+              </div>
+            </div>
+          </div>
+        </label>
+        <label class="popup-field">
+          <span>종료일</span>
+          <div class="popup-date-picker" data-date-picker="dateTo">
+            <input id="dateToInput" type="hidden" />
+            <button
+              type="button"
+              class="popup-date-trigger"
+              data-action="date-toggle"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+            >
+              <span data-date-label="dateTo">선택 안 함</span>
+            </button>
+            <div
+              class="popup-calendar"
+              role="dialog"
+              aria-label="종료일 선택"
+              hidden
+            >
+              <div class="popup-calendar-head">
+                <button
+                  type="button"
+                  class="popup-calendar-nav"
+                  data-calendar-action="prev"
+                  aria-label="이전 달"
+                >
+                  <svg
+                    class="popup-calendar-nav-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M15 5l-6 7 6 7"
+                      stroke="currentColor"
+                      stroke-width="2.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    ></path>
+                  </svg>
+                </button>
+                <strong data-calendar-title></strong>
+                <button
+                  type="button"
+                  class="popup-calendar-nav"
+                  data-calendar-action="next"
+                  aria-label="다음 달"
+                >
+                  <svg
+                    class="popup-calendar-nav-icon"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M9 5l6 7-6 7"
+                      stroke="currentColor"
+                      stroke-width="2.4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    ></path>
+                  </svg>
+                </button>
+              </div>
+              <div class="popup-calendar-presets" aria-label="빠른 기간 선택">
+                <button type="button" data-range-preset="week">
+                  최근 1주일
+                </button>
+                <button type="button" data-range-preset="month1">1개월</button>
+                <button type="button" data-range-preset="month3">3개월</button>
+                <button type="button" data-range-preset="month6">6개월</button>
+                <button type="button" data-range-preset="year1">1년</button>
+              </div>
+              <div class="popup-calendar-weekdays" aria-hidden="true">
+                <span>일</span><span>월</span><span>화</span><span>수</span
+                ><span>목</span><span>금</span><span>토</span>
+              </div>
+              <div class="popup-calendar-grid" data-calendar-grid></div>
+              <div class="popup-calendar-actions">
+                <button type="button" data-calendar-action="clear">
+                  초기화
+                </button>
+                <button type="button" data-calendar-action="close">닫기</button>
+              </div>
+            </div>
+          </div>
+        </label>
+        <div class="popup-field popup-duration-field">
+          <span>영상 길이</span>
+          <div class="popup-duration-picker" id="durationPicker">
+            <button
+              type="button"
+              class="popup-duration-trigger"
+              id="durationTrigger"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <span id="durationLabel">길이 전체</span>
+            </button>
+            <div
+              class="popup-duration-menu"
+              id="durationMenu"
+              role="listbox"
+              aria-label="영상 길이 선택"
+              hidden
+            >
+              <button
+                type="button"
+                role="option"
+                aria-selected="true"
+                data-duration-value="all"
+              >
+                길이 전체
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-duration-value="under10m"
+              >
+                10분 이하
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-duration-value="10m-30m"
+              >
+                10분~30분
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-duration-value="30m-1h"
+              >
+                30분~1시간
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-duration-value="1h-6h"
+              >
+                1시간~6시간
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-duration-value="6h-12h"
+              >
+                6시간~12시간
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-duration-value="over12h"
+              >
+                12시간 이상
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="popup-field popup-video-type-field">
+          <span>유형</span>
+          <div class="popup-video-type-picker" id="videoTypePicker">
+            <button
+              type="button"
+              class="popup-video-type-trigger"
+              id="videoTypeTrigger"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <span id="videoTypeLabel">유형 전체</span>
+            </button>
+            <div
+              class="popup-video-type-menu"
+              id="videoTypeMenu"
+              role="listbox"
+              aria-label="영상 유형 선택"
+              hidden
+            >
+              <button
+                type="button"
+                role="option"
+                aria-selected="true"
+                data-video-type-value="all"
+              >
+                유형 전체
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-video-type-value="replay"
+              >
+                다시보기
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-video-type-value="upload"
+              >
+                업로드
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-video-type-value="watching"
+              >
+                시청 중
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-video-type-value="unwatched"
+              >
+                시청안함
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="popup-field popup-sort-field">
+          <span>정렬</span>
+          <div class="popup-sort-picker" id="sortPicker">
+            <button
+              type="button"
+              class="popup-sort-trigger"
+              id="sortTrigger"
+              aria-haspopup="listbox"
+              aria-expanded="false"
+            >
+              <span id="sortLabel">최신순</span>
+            </button>
+            <div
+              class="popup-sort-menu"
+              id="sortMenu"
+              role="listbox"
+              aria-label="정렬 선택"
+              hidden
+            >
+              <button
+                type="button"
+                role="option"
+                aria-selected="true"
+                data-sort-value="latest"
+              >
+                최신순
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-sort-value="oldest"
+              >
+                오래된순
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-sort-value="popular"
+              >
+                인기순
+              </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                data-sort-value="livePv"
+              >
+                라이브 시청순
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div
+        class="popup-progress"
+        id="fetchProgress"
+        aria-hidden="true"
+        aria-live="polite"
+      >
+        <span id="fetchProgressBar"></span>
+        <span class="popup-progress-label" id="fetchProgressLabel"></span>
+      </div>
+      <div class="popup-channel" id="channelStatus">채널을 확인 중입니다.</div>
+      <div class="popup-summary-row">
+        <div class="popup-summary" id="summary">
+          <img
+            class="popup-summary-loading"
+            src="loading.svg"
+            alt=""
+            aria-hidden="true"
+          />
+          <span>준비 중입니다.</span>
+        </div>
+        <button
+          type="button"
+          class="popup-category-filter-chip"
+          id="categoryFilterChip"
+          hidden
+        >
+          <span id="categoryFilterChipLabel"></span>
+          <svg
+            class="popup-close-icon"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M6 6l12 12M18 6 6 18"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+            ></path>
+          </svg>
+        </button>
+      </div>
+      <ol class="popup-results" id="results"></ol>
+    </main>
+    <script src="src/searchQuery.js"></script>
+    <script src="src/popup.js"></script>
+  </body>
+</html>
