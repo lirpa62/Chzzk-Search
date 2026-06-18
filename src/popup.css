@@ -1580,8 +1580,21 @@ body[data-content-type="clips"] .popup-controls {
   white-space: nowrap;
 }
 
+.popup-results .cheese-search-clip-like,
 .popup-results .cheese-search-clip-date {
   margin-left: 6px;
+}
+
+.popup-results .cheese-search-clip-like {
+  align-items: center;
+  display: inline-flex;
+  flex: none;
+}
+
+.popup-results .cheese-search-clip-like-icon {
+  flex: none;
+  margin-right: 2px;
+  vertical-align: middle;
 }
 
 .popup-results .cheese-search-clip-duration {
@@ -1934,13 +1947,25 @@ body[data-content-type="clips"] .popup-controls {
 .popup-meta {
   display: flex;
   flex-direction: column;
-  flex-wrap: wrap;
   gap: 0;
   margin-top: 8px;
   color: var(--popup-muted);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
+}
+
+.popup-meta-counts,
+.popup-meta-dates {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.popup-meta-counts span + span:before {
+  content: "·";
+  display: inline-block;
+  margin: 0 6px;
 }
 
 .popup-meta .popup-publish:before {

@@ -215,6 +215,7 @@ async function loadVideos(forceRefresh = false) {
         channelId,
         videoType: "",
         sortType: "LATEST",
+        sort: elements.sortPicker.dataset.sort || "latest",
         filterType: normalizeClipFilterType(params.get("filterType")),
         orderType: getClipOrderTypeFromSort(elements.sortPicker.dataset.sort),
         forceRefresh,
@@ -386,6 +387,7 @@ async function peekBackgroundCache({ channelId, isClipSearch }) {
         contentType: isClipSearch ? "clips" : "videos",
         videoType: "",
         sortType: "LATEST",
+        sort: elements.sortPicker.dataset.sort || "latest",
         filterType: normalizeClipFilterType(params.get("filterType")),
         orderType: getClipOrderTypeFromSort(elements.sortPicker.dataset.sort),
       },
@@ -472,6 +474,15 @@ async function hydrateFromSessionCache({ channelId, isClipSearch }) {
       ? cachedValue.videos
       : [];
   if (!cachedList.length) return false;
+  const metricType = getSortMetricType(
+    elements.sortPicker.dataset.sort || "latest",
+  );
+  if (metricType) {
+    const field = getSortMetricField(metricType);
+    if (field && !hasMetricForEveryItem(cachedList, field)) {
+      return false;
+    }
+  }
 
   videos = cachedList;
   if (isClipSearch) {
@@ -608,15 +619,31 @@ function appendProgressClips(progress) {
   if (!clips.length) return false;
 
   const newClips = [];
+  const updatedClipsById = new Map();
   for (const clip of clips) {
     const clipUID = String(clip?.clipUID || "").trim();
-    if (!clipUID || knownClipUIDs.has(clipUID)) continue;
+    if (!clipUID) continue;
+    if (knownClipUIDs.has(clipUID)) {
+      updatedClipsById.set(clipUID, clip);
+      continue;
+    }
     knownClipUIDs.add(clipUID);
     newClips.push(clip);
   }
-  if (!newClips.length) return false;
+  if (!newClips.length && !updatedClipsById.size) return false;
 
-  videos = videos.concat(newClips);
+  if (updatedClipsById.size) {
+    videos = videos.map((item) => {
+      const clipUID = String(item?.clipUID || "").trim();
+      const updatedClip = updatedClipsById.get(clipUID);
+      return updatedClip ? { ...item, ...updatedClip } : item;
+    });
+    progressResultSignature = "";
+    renderedClipUIDs = new Set();
+  }
+  if (newClips.length) {
+    videos = videos.concat(newClips);
+  }
   scheduleProgressRender();
   return true;
 }
@@ -1227,6 +1254,17 @@ function getFilteredVideos() {
           getViewCount(b) - getViewCount(a) || getItemTime(b) - getItemTime(a)
         );
       }
+      if (elements.sortPicker.dataset.sort === "comments") {
+        return (
+          getCommentCount(b) - getCommentCount(a) ||
+          getItemTime(b) - getItemTime(a)
+        );
+      }
+      if (elements.sortPicker.dataset.sort === "likes") {
+        return (
+          getLikeCount(b) - getLikeCount(a) || getItemTime(b) - getItemTime(a)
+        );
+      }
       if (elements.sortPicker.dataset.sort === "livePv") {
         return (
           getLivePvCount(b) - getLivePvCount(a) ||
@@ -1377,6 +1415,37 @@ function getItemTime(item) {
 
 function getViewCount(item) {
   return Number(item?.readCount ?? item?.viewCount ?? 0);
+}
+
+function getCommentCount(item) {
+  return Number(
+    item?.commentCount ??
+      item?.commentsCount ??
+      item?.optionalProperty?.commentCount ??
+      item?.interaction?.comment?.count ??
+      0,
+  );
+}
+
+function getLikeReactionCount(interaction) {
+  const reactions = interaction?.like?.reactions;
+  if (!Array.isArray(reactions)) return undefined;
+  const likeReaction =
+    reactions.find((reaction) => reaction?.reactionType === "like") ??
+    reactions[0];
+  const count = Number(likeReaction?.count ?? likeReaction?.reactionCount);
+  return Number.isFinite(count) ? count : undefined;
+}
+
+function getLikeCount(item) {
+  return Number(
+    item?.likeCount ??
+      item?.reactionCount ??
+      item?.reaction?.count ??
+      item?.interaction?.reaction?.count ??
+      getLikeReactionCount(item?.interaction) ??
+      0,
+  );
 }
 
 function getLivePvCount(item) {
@@ -1556,8 +1625,31 @@ function normalizeClipFilterType(value) {
 
 function getClipOrderTypeFromSort(sort) {
   if (activeContentType !== "clips") return "RECENT";
-  if (sort === "popular") return "POPULAR";
+  // 좋아요순은 전체 수집 후 실제 좋아요 수로 재정렬하므로 수집 orderType은
+  // 결과 정확성과 무관하다. 조회수 높은 클립이 대체로 좋아요도 많아, POPULAR로
+  // 수집하면 상위권에 가까운 클립이 먼저 도착·표시되어 점진 표시가 자연스럽다.
+  if (sort === "popular" || sort === "likes") return "POPULAR";
   return "RECENT";
+}
+
+function getSortMetricType(sort) {
+  if (activeContentType === "clips") {
+    return sort === "likes" ? "likes" : "";
+  }
+  if (sort === "comments") return "comments";
+  return "";
+}
+
+function getSortMetricField(metricType) {
+  if (metricType === "comments") return "commentCount";
+  if (metricType === "likes") return "likeCount";
+  return "";
+}
+
+function hasMetricForEveryItem(items, field) {
+  return (Array.isArray(items) ? items : []).every((item) =>
+    Object.prototype.hasOwnProperty.call(item || {}, field),
+  );
 }
 
 function normalizeClipOrderType(value) {
@@ -1725,6 +1817,11 @@ function renderCard(video) {
   const livePvBadge = video.livePv
     ? `<span class="popup-thumb-badge">${formatCompactCount(video.livePv)}회 시청된 라이브</span>`
     : "";
+  const commentCount = getCommentCount(video);
+  const commentCountHtml =
+    commentCount > 0
+      ? `<span>댓글수 ${commentCount.toLocaleString("ko-KR")}개</span>`
+      : "";
   const watchTimelineBar = renderWatchTimelineBar(video, "popup");
   return `
     <li class="popup-card">
@@ -1743,8 +1840,11 @@ function renderCard(video) {
       <div class="popup-body">
         <a class="popup-title" href="${getVideoUrl(video)}" target="_blank" rel="noreferrer">${escapeHtml(video.videoTitle || "제목 없음")}</a>
         <div class="popup-meta">
-          <span>조회수 ${Number(video.readCount || 0).toLocaleString("ko-KR")}회</span>
-          <div>
+          <div class="popup-meta-counts">
+            <span>조회수 ${Number(video.readCount || 0).toLocaleString("ko-KR")}회</span>
+            ${commentCountHtml}
+          </div>
+          <div class="popup-meta-dates">
             ${
               formatLiveStartDateTime(video)
                 ? `<span class="popup-live">${escapeHtml(formatLiveStartDateTime(video))}</span>`
@@ -1785,6 +1885,12 @@ function createClipPlayIcon() {
     <svg width="11" height="12" viewBox="0 0 9 10" fill="none" xmlns="http://www.w3.org/2000/svg" class="clip_card_icon_play__NHlLB" aria-hidden="true">
       <path fill-rule="evenodd" clip-rule="evenodd" d="M3.23261 1.29239C2.7002 0.950127 2 1.3324 2 1.96533V8.03467C2 8.6676 2.7002 9.04987 3.23261 8.70761L7.9532 5.67294C8.44306 5.35803 8.44306 4.64197 7.9532 4.32706L3.23261 1.29239Z" stroke="currentColor"></path>
     </svg>
+  `;
+}
+
+function createClipLikeIcon() {
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 30 30" fill="none" role="img" aria-hidden="true" class="cheese-search-clip-like-icon"><g clip-path="url(#clip0_14053_82258)"><g filter="url(#filter0_d_14053_82258)"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.53 4c-2.07 0-3.94.87-5.29 2.26-.63.66-1.19 1.4-1.57 2.33s-.58 2-.57 3.3c.02 2.74 1.35 4.66 3.67 7l.03.03c3.03 2.86 5.7 5.36 8.56 7.68.37.3.9.3 1.26 0 2.86-2.31 6.29-5.38 8.59-7.7s3.69-4.16 3.69-7.02c0-2.09-.82-4.26-2.25-5.67A7.7 7.7 0 0 0 20.12 4c-1.46.07-2.8.6-3.9 1.42q-.68.51-1.23 1.13-.61-.69-1.37-1.23A7 7 0 0 0 9.52 4M5.85 7.82c.98-1 2.3-1.62 3.78-1.62 1.05 0 2.04.35 2.88.94q.98.7 1.62 1.75a.98.98 0 0 0 1.66.04q.68-1.04 1.58-1.71 1.21-.92 2.73-1.01c1.62 0 2.99.61 3.97 1.59a6 6 0 0 1 1.63 4.17c0 1.98-.86 3.28-3.06 5.5A111 111 0 0 1 15 24.4c-2.51-2.08-4.9-4.32-7.66-6.93-2.17-2.2-3.01-3.6-3.03-5.5a6 6 0 0 1 .4-2.47q.4-.91 1.15-1.67" fill="currentColor"></path></g></g><defs><filter id="filter0_d_14053_82258" x="0.0996094" y="2" width="29.8008" height="26.825" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"></feFlood><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"></feColorMatrix><feOffset></feOffset><feGaussianBlur stdDeviation="1"></feGaussianBlur><feComposite in2="hardAlpha" operator="out"></feComposite><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.15 0"></feColorMatrix><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_14053_82258"></feBlend><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_14053_82258" result="shape"></feBlend></filter><clipPath id="clip0_14053_82258"><rect width="30" height="30" fill="currentColor"></rect></clipPath></defs></svg>
   `;
 }
 
@@ -1878,6 +1984,11 @@ function renderClipCard(clip) {
   const createdDate = formatClipCreatedDate(clip);
   const clipUrl = getClipUrl(clip);
   const categoryLink = isAdult ? "" : renderClipCategoryLink(clip);
+  const likeCount = getLikeCount(clip);
+  const likeCountHtml =
+    likeCount > 0
+      ? `<span class="cheese-search-clip-like">${createClipLikeIcon()}<span class="blind">좋아요 수</span>${formatCompactCount(likeCount)}</span>`
+      : "";
 
   return `
     <li class="channel_clip_item__eVWfU">
@@ -1891,6 +2002,7 @@ function renderClipCard(clip) {
             <span class="clip_card_information__8-dGy clip_card_-play__hqsAe">
               <span class="cheese-search-clip-info-main">
                 ${createClipPlayIcon()}<span class="blind">재생 수</span>${formatCompactCount(clip?.readCount)}
+                ${likeCountHtml}
                 ${createdDate ? `<span class="cheese-search-clip-date">${escapeHtml(createdDate)}</span>` : ""}
               </span>
               <span class="cheese-search-clip-duration">${formatDuration(clip?.duration)}</span>
@@ -2034,6 +2146,10 @@ chrome.runtime.onMessage.addListener((message) => {
     activeFetchSilentRevalidate = false;
     clearProgressStallTimer();
     updateRefreshButton();
+    if (needsSortMetricRefreshForCurrentResults()) {
+      void loadVideos(false);
+      return;
+    }
     if (!isSilent) {
       renderProgressClipCards();
     }
@@ -2084,6 +2200,7 @@ async function handleProgressStall() {
         contentType: isClipSearch ? "clips" : "videos",
         videoType: "",
         sortType: "LATEST",
+        sort: elements.sortPicker.dataset.sort || "latest",
         filterType: normalizeClipFilterType(params.get("filterType")),
         orderType: getClipOrderTypeFromSort(elements.sortPicker.dataset.sort),
         requestId: newRequestId,
@@ -2120,7 +2237,21 @@ function handleFilterChange() {
     renderProgressClipCards();
     return;
   }
+  if (needsSortMetricRefreshForCurrentResults()) {
+    loadVideos(false);
+    return;
+  }
   render();
+}
+
+function needsSortMetricRefreshForCurrentResults() {
+  const metricType = getSortMetricType(
+    elements.sortPicker.dataset.sort || "latest",
+  );
+  if (!metricType || !videos.length) return false;
+  const field = getSortMetricField(metricType);
+  if (!field) return false;
+  return !hasMetricForEveryItem(videos, field);
 }
 
 function handleCategoryFilterClick(event) {
@@ -2853,13 +2984,15 @@ function getSortOptions() {
     return [
       { value: "latest", label: "최신순" },
       { value: "oldest", label: "오래된순" },
-      { value: "popular", label: "인기순" },
+      { value: "popular", label: "조회순" },
+      { value: "likes", label: "좋아요순" },
     ];
   }
   return [
     { value: "latest", label: "최신순" },
     { value: "oldest", label: "오래된순" },
-    { value: "popular", label: "인기순" },
+    { value: "popular", label: "조회순" },
+    { value: "comments", label: "댓글 많은순" },
     { value: "livePv", label: "라이브 시청순" },
   ];
 }

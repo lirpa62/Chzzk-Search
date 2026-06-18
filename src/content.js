@@ -33,6 +33,7 @@ const EMPTY_RESULTS_ANIMATION_URL = chrome.runtime.getURL(
 const SEARCHING_ANIMATION_URL = chrome.runtime.getURL(
   "searching-animation.svg",
 );
+const STUDIO_MANAGE_API_BASE = "https://api.chzzk.naver.com/manage/v1";
 const VIDEO_COMMENT_MARKER_SELECTOR = ".cheese-search-comment-marker";
 const VIDEO_COMMENT_MARKER_LAYER_CLASS = "cheese-search-comment-marker-layer";
 const VIDEO_COMMENT_BUTTON_CLASS = "cheese-search-comment-timestamp-button";
@@ -53,6 +54,11 @@ const CHEESE_SEARCH_MUTATION_IGNORE_SELECTOR = [
   ".cheese-search-shell",
   ".cheese-search-result-header",
   ".cheese-search-results-list",
+  ".cheese-search-studio-summary",
+  ".cheese-search-studio-menu",
+  ".cheese-search-studio-more-menu",
+  "[data-cheese-studio-row]",
+  "[data-cheese-studio-toast]",
   ".cheese-search-scroll-top",
   ".cheese-search-comment-marker-layer",
   ".cheese-search-comment-marker",
@@ -111,6 +117,33 @@ const commentMarkerState = {
 
 const observerState = {
   initTimer: 0,
+  studioMakeClipInitTimer: 0,
+};
+
+const studioMakeClipState = {
+  channelId: "",
+  initializedFor: "",
+  clips: [],
+  streamers: [],
+  preloaded: false,
+  preloadPromise: null,
+  preloadError: "",
+  hasLoaded: false,
+  loading: false,
+  error: "",
+  query: "",
+  dateFrom: "",
+  dateTo: "",
+  streamer: "all",
+  sort: "latest",
+  tableSortField: "",
+  tableSortDirection: "asc",
+  originalRows: [],
+  streamerOptionsSignature: "",
+  resultSignature: "",
+  visibleCount: 120,
+  inactive: false,
+  deletedClipUIDs: new Set(),
 };
 
 const DURATION_FILTERS = {
@@ -132,6 +165,7 @@ const VIDEO_TYPE_FILTERS = {
 const RESULT_INITIAL_RENDER_COUNT = 120;
 const RESULT_RENDER_STEP_COUNT = 120;
 const RESULT_SCROLL_THRESHOLD_PX = 2600;
+const STUDIO_MAKE_CLIP_INIT_DELAY_MS = 240;
 const PROGRESS_STALL_TIMEOUT_MS = 15000;
 const CACHE_TTL_MS = 1 * 60 * 60 * 1000;
 const CACHE_CHUNK_SEPARATOR = "#chunk:";
@@ -360,12 +394,14 @@ function getSortOptions() {
       { value: "latest", label: "최신순" },
       { value: "oldest", label: "오래된순" },
       { value: "popular", label: "인기순" },
+      { value: "likes", label: "좋아요순" },
     ];
   }
   return [
     { value: "latest", label: "최신순" },
     { value: "oldest", label: "오래된순" },
     { value: "popular", label: "인기순" },
+    { value: "comments", label: "댓글 많은순" },
     { value: "livePv", label: "라이브 시청순" },
   ];
 }
@@ -373,7 +409,7 @@ function getSortOptions() {
 function createDatePicker(type, label, includePresets = true) {
   return `
     <div class="cheese-search-date-picker" data-date-picker="${type}">
-      <button type="button" class="cheese-search-control cheese-search-date-trigger" data-action="date-toggle" aria-haspopup="dialog" aria-expanded="false">
+      <button type="button" class="_component_14lz7_8 _large_14lz7_44 cheese-search-control cheese-search-date-trigger" data-action="date-toggle" aria-haspopup="dialog" aria-expanded="false">
         <span class="cheese-search-date-caption">${label}</span>
         <span data-date-label="${type}">선택 안 함</span>
       </button>
@@ -516,6 +552,7 @@ async function loadVideos({ forceRefresh = false } = {}) {
         contentType,
         videoType: "",
         sortType: "LATEST",
+        sort: controls?.sort || "latest",
         filterType: getCurrentClipFilterType(),
         orderType: getClipOrderTypeFromSort(controls?.sort),
         forceRefresh,
@@ -760,7 +797,7 @@ async function writeLastAutoRestoreState({ isClipSearch, controls }) {
   if (isClipSearch) {
     value.filterType = getCurrentClipFilterType();
     value.orderType = getClipOrderTypeFromSort(controls?.sort);
-    value.sort = value.orderType === "POPULAR" ? "popular" : "latest";
+    value.sort = controls?.sort || "latest";
   }
   try {
     await chrome.storage.local.set({ [key]: value });
@@ -902,6 +939,7 @@ async function peekBackgroundCache({ isClipSearch, controls, restoreState }) {
         contentType: getContentConfig().contentType,
         videoType: "",
         sortType: "LATEST",
+        sort: restoreState?.sort || controls?.sort || "latest",
         filterType: restoreState
           ? normalizeClipFilterType(restoreState.filterType)
           : getCurrentClipFilterType(),
@@ -964,6 +1002,15 @@ async function hydrateFromSessionCache({
       ? cachedValue.videos
       : [];
   if (!cachedList.length) return false;
+  const metricType = getSortMetricType(
+    restoreState?.sort || controls?.sort || "latest",
+  );
+  if (metricType) {
+    const field = getSortMetricField(metricType);
+    if (field && !hasMetricForEveryItem(cachedList, field)) {
+      return false;
+    }
+  }
 
   state.videos = cachedList;
   if (isClipSearch) {
@@ -1122,18 +1169,34 @@ function appendProgressClips(progress) {
   }
 
   const newClips = [];
+  const updatedClipsById = new Map();
   for (const clip of clips) {
     const clipUID = String(clip?.clipUID || "").trim();
-    if (!clipUID || state.knownClipUIDs.has(clipUID)) continue;
+    if (!clipUID) continue;
+    if (state.knownClipUIDs.has(clipUID)) {
+      updatedClipsById.set(clipUID, clip);
+      continue;
+    }
     state.knownClipUIDs.add(clipUID);
     newClips.push(clip);
   }
-  if (!newClips.length) {
+  if (!newClips.length && !updatedClipsById.size) {
     renderProgressClipCards();
     return false;
   }
 
-  state.videos = state.videos.concat(newClips);
+  if (updatedClipsById.size) {
+    state.videos = state.videos.map((item) => {
+      const clipUID = String(item?.clipUID || "").trim();
+      const updatedClip = updatedClipsById.get(clipUID);
+      return updatedClip ? { ...item, ...updatedClip } : item;
+    });
+    state.progressResultSignature = "";
+    state.renderedClipUIDs = new Set();
+  }
+  if (newClips.length) {
+    state.videos = state.videos.concat(newClips);
+  }
   state.hasLoaded = true;
   state.hasNoVideos = false;
   updateControlsDisabled();
@@ -1235,7 +1298,20 @@ function handleFilterChange() {
     renderProgressClipCards();
     return;
   }
+  if (needsSortMetricRefreshForCurrentResults()) {
+    loadVideos({ forceRefresh: false });
+    return;
+  }
   renderResults();
+}
+
+function needsSortMetricRefreshForCurrentResults() {
+  const controls = getControls();
+  const metricType = getSortMetricType(controls?.sort);
+  if (!metricType || !state.videos.length) return false;
+  const field = getSortMetricField(metricType);
+  if (!field) return false;
+  return !hasMetricForEveryItem(state.videos, field);
 }
 
 function getResultSignature(controls) {
@@ -1380,6 +1456,17 @@ function getFilteredVideos(controls) {
       if (controls.sort === "popular" || controls.sort === "views") {
         return (
           getViewCount(b) - getViewCount(a) || getItemTime(b) - getItemTime(a)
+        );
+      }
+      if (controls.sort === "comments") {
+        return (
+          getCommentCount(b) - getCommentCount(a) ||
+          getItemTime(b) - getItemTime(a)
+        );
+      }
+      if (controls.sort === "likes") {
+        return (
+          getLikeCount(b) - getLikeCount(a) || getItemTime(b) - getItemTime(a)
         );
       }
       if (controls.sort === "livePv") {
@@ -1923,8 +2010,31 @@ function getCurrentClipFilterType() {
 
 function getClipOrderTypeFromSort(sort) {
   if (!isClipContent()) return "RECENT";
-  if (sort === "popular") return "POPULAR";
+  // 좋아요순은 전체 수집 후 실제 좋아요 수로 재정렬하므로 수집 orderType은
+  // 결과 정확성과 무관하다. 조회수 높은 클립이 대체로 좋아요도 많아, POPULAR로
+  // 수집하면 상위권에 가까운 클립이 먼저 도착·표시되어 점진 표시가 자연스럽다.
+  if (sort === "popular" || sort === "likes") return "POPULAR";
   return "RECENT";
+}
+
+function getSortMetricType(sort) {
+  if (isClipContent()) {
+    return sort === "likes" ? "likes" : "";
+  }
+  if (sort === "comments") return "comments";
+  return "";
+}
+
+function getSortMetricField(metricType) {
+  if (metricType === "comments") return "commentCount";
+  if (metricType === "likes") return "likeCount";
+  return "";
+}
+
+function hasMetricForEveryItem(items, field) {
+  return (Array.isArray(items) ? items : []).every((item) =>
+    Object.prototype.hasOwnProperty.call(item || {}, field),
+  );
 }
 
 function getInitialSortValue() {
@@ -1961,6 +2071,7 @@ function handleDatePickerClick(event) {
   const shell = picker.closest(".cheese-search-shell");
   const type = picker.dataset.datePicker;
   if (!shell || !type) return;
+  const isStudioShell = shell.classList.contains("cheese-search-studio-shell");
 
   const action = event.target.closest(
     "[data-action], [data-calendar-action], [data-calendar-year], [data-calendar-month], [data-range-preset], [data-date]",
@@ -1973,6 +2084,7 @@ function handleDatePickerClick(event) {
     closeSortPicker(shell);
     closeDurationPicker(shell);
     closeVideoTypePicker(shell);
+    closeStudioMenus();
     closeOtherDatePickers(shell, picker);
     toggleDatePicker(picker);
     return;
@@ -2024,6 +2136,10 @@ function handleDatePickerClick(event) {
   if (action.calendarAction === "clear") {
     setDateValue(shell, type, "");
     renderAllCalendars(shell);
+    if (isStudioShell) {
+      handleStudioDateFilterChange(shell);
+      return;
+    }
     handleFilterChange();
     return;
   }
@@ -2037,6 +2153,10 @@ function handleDatePickerClick(event) {
     applyRangePreset(shell, action.rangePreset);
     closeFloatingControls(shell);
     renderAllCalendars(shell);
+    if (isStudioShell) {
+      handleStudioDateFilterChange(shell);
+      return;
+    }
     handleFilterChange();
     return;
   }
@@ -2046,6 +2166,10 @@ function handleDatePickerClick(event) {
     normalizeDateRange(shell, type);
     closeDatePicker(picker);
     renderAllCalendars(shell);
+    if (isStudioShell) {
+      handleStudioDateFilterChange(shell);
+      return;
+    }
     handleFilterChange();
   }
 }
@@ -2185,9 +2309,15 @@ function keepDatePickerOpen(picker) {
 }
 
 function closeFloatingControlsFromOutside(event) {
-  const shell = document.querySelector(".cheese-search-shell");
-  if (!shell || shell.contains(event.target)) return;
-  closeFloatingControls(shell);
+  document.querySelectorAll(".cheese-search-shell").forEach((shell) => {
+    if (!shell.contains(event.target)) {
+      closeFloatingControls(shell);
+      return;
+    }
+    shell.querySelectorAll("[data-date-picker]").forEach((picker) => {
+      if (!picker.contains(event.target)) closeDatePicker(picker);
+    });
+  });
 }
 
 function closeFloatingControls(shell) {
@@ -2528,6 +2658,37 @@ function getViewCount(item) {
   return Number(item?.readCount ?? item?.viewCount ?? 0);
 }
 
+function getCommentCount(item) {
+  return Number(
+    item?.commentCount ??
+      item?.commentsCount ??
+      item?.optionalProperty?.commentCount ??
+      item?.interaction?.comment?.count ??
+      0,
+  );
+}
+
+function getLikeReactionCount(interaction) {
+  const reactions = interaction?.like?.reactions;
+  if (!Array.isArray(reactions)) return undefined;
+  const likeReaction =
+    reactions.find((reaction) => reaction?.reactionType === "like") ??
+    reactions[0];
+  const count = Number(likeReaction?.count ?? likeReaction?.reactionCount);
+  return Number.isFinite(count) ? count : undefined;
+}
+
+function getLikeCount(item) {
+  return Number(
+    item?.likeCount ??
+      item?.reactionCount ??
+      item?.reaction?.count ??
+      item?.interaction?.reaction?.count ??
+      getLikeReactionCount(item?.interaction) ??
+      0,
+  );
+}
+
 function getLivePvCount(item) {
   return Number(item?.livePv ?? 0);
 }
@@ -2784,6 +2945,12 @@ function createClipPlayIcon() {
   `;
 }
 
+function createClipLikeIcon() {
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 30 30" fill="none" role="img" aria-hidden="true" class="cheese-search-clip-like-icon"><g clip-path="url(#clip0_14053_82258)"><g filter="url(#filter0_d_14053_82258)"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.53 4c-2.07 0-3.94.87-5.29 2.26-.63.66-1.19 1.4-1.57 2.33s-.58 2-.57 3.3c.02 2.74 1.35 4.66 3.67 7l.03.03c3.03 2.86 5.7 5.36 8.56 7.68.37.3.9.3 1.26 0 2.86-2.31 6.29-5.38 8.59-7.7s3.69-4.16 3.69-7.02c0-2.09-.82-4.26-2.25-5.67A7.7 7.7 0 0 0 20.12 4c-1.46.07-2.8.6-3.9 1.42q-.68.51-1.23 1.13-.61-.69-1.37-1.23A7 7 0 0 0 9.52 4M5.85 7.82c.98-1 2.3-1.62 3.78-1.62 1.05 0 2.04.35 2.88.94q.98.7 1.62 1.75a.98.98 0 0 0 1.66.04q.68-1.04 1.58-1.71 1.21-.92 2.73-1.01c1.62 0 2.99.61 3.97 1.59a6 6 0 0 1 1.63 4.17c0 1.98-.86 3.28-3.06 5.5A111 111 0 0 1 15 24.4c-2.51-2.08-4.9-4.32-7.66-6.93-2.17-2.2-3.01-3.6-3.03-5.5a6 6 0 0 1 .4-2.47q.4-.91 1.15-1.67" fill="currentColor"></path></g></g><defs><filter id="filter0_d_14053_82258" x="0.0996094" y="2" width="29.8008" height="26.825" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB"><feFlood flood-opacity="0" result="BackgroundImageFix"></feFlood><feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"></feColorMatrix><feOffset></feOffset><feGaussianBlur stdDeviation="1"></feGaussianBlur><feComposite in2="hardAlpha" operator="out"></feComposite><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.15 0"></feColorMatrix><feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_14053_82258"></feBlend><feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_14053_82258" result="shape"></feBlend></filter><clipPath id="clip0_14053_82258"><rect width="30" height="30" fill="currentColor"></rect></clipPath></defs></svg>
+  `;
+}
+
 function createClipCategoryIcon() {
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="15" fill="none" viewBox="0 0 14 15" role="img" aria-hidden="true">
@@ -2874,6 +3041,11 @@ function renderClipCard(clip) {
   const createdDate = formatClipCreatedDate(clip);
   const clipUrl = getClipUrl(clip);
   const categoryLink = isAdult ? "" : renderClipCategoryLink(clip);
+  const likeCount = getLikeCount(clip);
+  const likeCountHtml =
+    likeCount > 0
+      ? `<span class="cheese-search-clip-like">${createClipLikeIcon()}<span class="blind">좋아요 수</span>${formatCompactCount(likeCount)}</span>`
+      : "";
 
   return `
     <li class="cheese-search-card channel_clip_item__eVWfU">
@@ -2887,6 +3059,7 @@ function renderClipCard(clip) {
             <span class="clip_card_information__8-dGy clip_card_-play__hqsAe">
               <span class="cheese-search-clip-info-main">
                 ${createClipPlayIcon()}<span class="blind">재생 수</span>${formatCompactCount(clip?.readCount)}
+                ${likeCountHtml}
                 ${createdDate ? `<span class="cheese-search-clip-date">${escapeHtml(createdDate)}</span>` : ""}
               </span>
               <span class="cheese-search-clip-duration">${formatDuration(clip?.duration)}</span>
@@ -2995,6 +3168,11 @@ function renderVideoCard(video) {
   const livePvBadge = video.livePv
     ? `<span class="thumbnail_badge_container__sMIz3">${formatCompactCount(video.livePv)}회 시청된 라이브</span>`
     : "";
+  const commentCount = getCommentCount(video);
+  const commentCountHtml =
+    commentCount > 0
+      ? `<span class="video_card_item__lOC8Y">댓글수 ${formatCount(commentCount)}개</span>`
+      : "";
   const watchTimelineBar = renderWatchTimelineBar(video, "cheese-search");
 
   return `
@@ -3017,6 +3195,7 @@ function renderVideoCard(video) {
             <a class="video_card_title__Amjk2" href="${getVideoUrl(video)}" target="_blank" rel="noreferrer">${escapeHtml(video.videoTitle || "제목 없음")}<span class="blind">동영상 엔드로 이동</span></a>
             <div class="video_card_information__1w2l-">
               <span class="video_card_item__lOC8Y">조회수 ${formatCount(video.readCount)}회</span>
+              ${commentCountHtml}
               <div class="video_card_time_info">
                 <span class="video_card_item__lOC8Y">${escapeHtml(formatLiveStartDateTime(video))}</span>
                 <span class="video_card_item__lOC8Y">${escapeHtml(formatPublishDateTime(video))}</span>
@@ -3678,6 +3857,1403 @@ function seekVideoToCommentTimestamp(seconds) {
   video.play?.().catch?.(() => {});
 }
 
+function getStudioMakeClipContext() {
+  if (location.hostname !== "studio.chzzk.naver.com") return null;
+  if (location.hash !== "#MAKECLIP") return null;
+  const match = location.pathname.match(/^\/([a-f0-9]{32})\/vod/i);
+  if (!match) return null;
+  return {
+    channelId: match[1],
+  };
+}
+
+function scheduleStudioMakeClipInit(context) {
+  if (observerState.studioMakeClipInitTimer) return;
+  observerState.studioMakeClipInitTimer = setTimeout(() => {
+    observerState.studioMakeClipInitTimer = 0;
+    const currentContext = getStudioMakeClipContext();
+    if (!currentContext || currentContext.channelId !== context.channelId) {
+      return;
+    }
+    initStudioMakeClips(currentContext);
+  }, STUDIO_MAKE_CLIP_INIT_DELAY_MS);
+}
+
+function clearScheduledStudioMakeClipInit() {
+  if (!observerState.studioMakeClipInitTimer) return;
+  clearTimeout(observerState.studioMakeClipInitTimer);
+  observerState.studioMakeClipInitTimer = 0;
+}
+
+function initStudioMakeClips(context) {
+  const initializedFor = `studio:${context.channelId}:makeClips`;
+  const isFreshContext = studioMakeClipState.initializedFor !== initializedFor;
+  if (isFreshContext) {
+    cleanupStudioMakeClipView({ removeControls: true });
+    studioMakeClipState.channelId = context.channelId;
+    studioMakeClipState.initializedFor = initializedFor;
+    studioMakeClipState.clips = [];
+    studioMakeClipState.streamers = [];
+    studioMakeClipState.preloaded = false;
+    studioMakeClipState.preloadPromise = null;
+    studioMakeClipState.preloadError = "";
+    studioMakeClipState.hasLoaded = false;
+    studioMakeClipState.loading = false;
+    studioMakeClipState.error = "";
+    studioMakeClipState.query = "";
+    studioMakeClipState.dateFrom = "";
+    studioMakeClipState.dateTo = "";
+    studioMakeClipState.streamer = "all";
+    studioMakeClipState.sort = "latest";
+    studioMakeClipState.tableSortField = "";
+    studioMakeClipState.tableSortDirection = "asc";
+    studioMakeClipState.originalRows = [];
+    studioMakeClipState.streamerOptionsSignature = "";
+    studioMakeClipState.resultSignature = "";
+    studioMakeClipState.visibleCount = RESULT_INITIAL_RENDER_COUNT;
+    studioMakeClipState.inactive = false;
+    studioMakeClipState.deletedClipUIDs = new Set();
+  }
+
+  const table = document.getElementById("make_clip_panel");
+  if (!table) return;
+  studioMakeClipState.inactive = false;
+  rememberStudioOriginalRows(table);
+  mountStudioHeaderSort(table);
+  mountStudioMakeClipControls(table);
+  if (studioMakeClipState.loading) {
+    renderStudioMakeClipStatus("내가 만든 클립을 불러오는 중입니다.");
+  } else if (studioMakeClipState.hasLoaded) {
+    renderStudioMakeClipResults();
+  }
+  void preloadStudioMakeClips();
+}
+
+function cleanupStudioMakeClipView({ removeControls = false } = {}) {
+  document
+    .querySelectorAll(
+      ".cheese-search-studio-shell, .cheese-search-studio-summary",
+    )
+    .forEach((element) => {
+      if (removeControls) {
+        element.remove();
+        return;
+      }
+      if (element.matches(".cheese-search-studio-shell")) {
+        closeFloatingControls(element);
+      }
+      hideOriginalElement(element);
+    });
+  closeStudioMenus();
+  closeStudioMoreMenus();
+  closeStudioDeleteClipDialog();
+  restoreStudioOriginalRows();
+  clearStudioRenderedRows(document);
+  showStudioOriginalView();
+}
+
+function hasStudioMakeClipArtifacts() {
+  return Boolean(
+    document.querySelector(
+      ".cheese-search-studio-shell, .cheese-search-studio-summary, [data-cheese-studio-row]",
+    ),
+  );
+}
+
+function cleanupStudioMakeClipViewIfInactive() {
+  if (getStudioMakeClipContext()) return false;
+  clearScheduledStudioMakeClipInit();
+  const hasArtifacts = hasStudioMakeClipArtifacts();
+  if (!studioMakeClipState.initializedFor && !hasArtifacts) {
+    return false;
+  }
+  if (
+    studioMakeClipState.inactive &&
+    !document.querySelector("[data-cheese-studio-row]")
+  ) {
+    return false;
+  }
+  cleanupStudioMakeClipView({ removeControls: false });
+  studioMakeClipState.inactive = true;
+  studioMakeClipState.resultSignature = "";
+  studioMakeClipState.visibleCount = RESULT_INITIAL_RENDER_COUNT;
+  return true;
+}
+
+function mountStudioMakeClipControls(anchor) {
+  const existing = document.querySelector(".cheese-search-studio-shell");
+  if (existing) {
+    if (existing.nextElementSibling !== anchor) {
+      anchor.before(existing);
+    }
+    showOriginalElement(existing);
+    updateStudioMakeClipControls(existing);
+    return existing;
+  }
+
+  const shell = document.createElement("div");
+  shell.className = "cheese-search-shell cheese-search-studio-shell";
+  shell.innerHTML = `
+    <div class="cheese-search-query-column">
+      <label class="cheese-search-field _component_14lz7_8 _large_14lz7_44" title="클립 제목과 스트리머를 검색합니다.">
+        ${createIcon()}
+        <input class="cheese-search-input" type="search" placeholder="클립 제목, 스트리머 검색" autocomplete="off" data-studio-query>
+        <button type="reset" class="search_form_button__+3aOm" data-studio-action="query-reset" hidden>
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="16" viewBox="0 0 15 16" fill="none" aria-hidden="true">
+            <path fill="currentColor" fill-rule="evenodd" d="M7.5 15.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15Zm2.995-10.495a.7.7 0 0 0-.903-.074l-.087.074L7.5 7.01 5.495 5.005l-.087-.074a.7.7 0 0 0-.903 1.064L6.51 8l-2.005 2.005a.7.7 0 0 0 .903 1.064l.087-.074L7.5 8.99l2.005 2.005.087.074a.7.7 0 0 0 .903-1.064L8.49 8l2.005-2.005a.7.7 0 0 0 0-.99Z" clip-rule="evenodd" opacity="0.5"></path>
+          </svg>
+          <span class="blind">삭제</span>
+        </button>
+      </label>
+    </div>
+    ${createDatePicker("dateFrom", "시작일")}
+    ${createDatePicker("dateTo", "종료일")}
+    <div class="cheese-search-studio-select" data-studio-select="streamer">
+      <button type="button" class="_component_14lz7_8 _large_14lz7_44 cheese-search-studio-select-button" data-studio-action="streamer-toggle" aria-haspopup="listbox" aria-expanded="false">
+        <span class="_inner_14lz7_18">
+          <span data-studio-streamer-label>스트리머 전체</span>
+          ${createStudioChevronIcon()}
+        </span>
+      </button>
+      <ul class="_layer_14lz7_62 cheese-search-studio-menu" role="listbox" aria-label="스트리머별 분류" data-studio-streamer-menu hidden></ul>
+    </div>
+    <div class="cheese-search-studio-select" data-studio-select="sort">
+      <button type="button" class="_component_14lz7_8 _large_14lz7_44 cheese-search-studio-select-button" data-studio-action="sort-toggle" aria-haspopup="listbox" aria-expanded="false">
+        <span class="_inner_14lz7_18">
+          <span data-studio-sort-label>최신순</span>
+          ${createStudioChevronIcon()}
+        </span>
+      </button>
+      <ul class="_layer_14lz7_62 cheese-search-studio-menu" role="listbox" aria-label="정렬" data-studio-sort-menu hidden></ul>
+    </div>
+    <button type="button" class="cheese-search-control cheese-search-button _component_14lz7_8 _large_14lz7_44" data-studio-action="reset">초기화</button>
+  `;
+
+  anchor.before(shell);
+  shell
+    .querySelector("[data-studio-query]")
+    .addEventListener("input", handleStudioQueryInput);
+  shell.querySelectorAll("[data-date-picker]").forEach((picker) => {
+    picker.addEventListener("click", handleDatePickerClick);
+  });
+  shell.addEventListener("click", handleStudioControlClick);
+  shell.querySelectorAll("[data-date-picker]").forEach(renderCalendar);
+  updateStudioMakeClipControls(shell);
+  return shell;
+}
+
+function updateStudioMakeClipControls(
+  shell = document.querySelector(".cheese-search-studio-shell"),
+) {
+  if (!shell) return;
+  const query = shell.querySelector("[data-studio-query]");
+  const reset = shell.querySelector('[data-studio-action="query-reset"]');
+  const streamerLabel = shell.querySelector("[data-studio-streamer-label]");
+  const sortLabel = shell.querySelector("[data-studio-sort-label]");
+  if (query) query.value = studioMakeClipState.query;
+  if (reset) reset.hidden = !studioMakeClipState.query;
+  setDateValue(shell, "dateFrom", studioMakeClipState.dateFrom);
+  setDateValue(shell, "dateTo", studioMakeClipState.dateTo);
+  updateStudioStreamerMenu(shell);
+  updateStudioSortMenu(shell);
+  const streamerOption = getStudioStreamerOptions().find(
+    (option) => option.value === studioMakeClipState.streamer,
+  );
+  if (!streamerOption) studioMakeClipState.streamer = "all";
+  if (streamerLabel) {
+    streamerLabel.textContent =
+      streamerOption?.label ||
+      getStudioStreamerOptions()[0]?.label ||
+      "스트리머 전체";
+  }
+  if (sortLabel) {
+    sortLabel.textContent =
+      getStudioSortOptions().find(
+        (option) => option.value === studioMakeClipState.sort,
+      )?.label || "최신순";
+  }
+}
+
+function updateStudioStreamerMenu(shell) {
+  const menu = shell.querySelector("[data-studio-streamer-menu]");
+  if (!menu) return;
+  const options = getStudioStreamerOptions();
+  const signature = options
+    .map((option) => `${option.value}:${option.label}`)
+    .join("|");
+  if (
+    studioMakeClipState.streamerOptionsSignature !== signature ||
+    !menu.children.length
+  ) {
+    menu.innerHTML = options.map(renderStudioMenuOption("streamer")).join("");
+    studioMakeClipState.streamerOptionsSignature = signature;
+  }
+  menu.querySelectorAll("[data-studio-streamer-value]").forEach((button) => {
+    button.setAttribute(
+      "aria-selected",
+      String(
+        button.dataset.studioStreamerValue === studioMakeClipState.streamer,
+      ),
+    );
+  });
+}
+
+function updateStudioSortMenu(shell) {
+  const menu = shell.querySelector("[data-studio-sort-menu]");
+  if (!menu) return;
+  if (!menu.children.length) {
+    menu.innerHTML = getStudioSortOptions()
+      .map(renderStudioMenuOption("sort"))
+      .join("");
+  }
+  menu.querySelectorAll("[data-studio-sort-value]").forEach((button) => {
+    button.setAttribute(
+      "aria-selected",
+      String(button.dataset.studioSortValue === studioMakeClipState.sort),
+    );
+  });
+}
+
+function renderStudioMenuOption(type) {
+  return (option) =>
+    `<li class="_item_14lz7_79" role="presentation"><button type="button" class="_option_14lz7_83" role="option" aria-selected="false" data-studio-${type}-value="${escapeAttribute(option.value)}"><span class="">${escapeHtml(option.label)}</span></button></li>`;
+}
+
+function getStudioStreamerOptions() {
+  return [
+    { value: "all", label: "스트리머 전체" },
+    ...studioMakeClipState.streamers,
+  ];
+}
+
+function setStudioStreamersFromClips(clips) {
+  const byId = new Map();
+  (Array.isArray(clips) ? clips : []).forEach((clip) => {
+    const channelId = String(clip?.makeChannel?.channelId || "").trim();
+    const channelName = String(clip?.makeChannel?.channelName || "").trim();
+    if (!channelId || !channelName || byId.has(channelId)) return;
+    byId.set(channelId, channelName);
+  });
+  studioMakeClipState.streamers = Array.from(byId, ([value, label]) => ({
+    value,
+    label,
+  })).sort((a, b) => a.label.localeCompare(b.label, "ko-KR"));
+  studioMakeClipState.streamerOptionsSignature = "";
+  if (
+    studioMakeClipState.streamer !== "all" &&
+    !studioMakeClipState.streamers.some(
+      (streamer) => streamer.value === studioMakeClipState.streamer,
+    )
+  ) {
+    studioMakeClipState.streamer = "all";
+  }
+}
+
+function applyStudioMakeClipResult(result) {
+  studioMakeClipState.clips = Array.isArray(result?.clips) ? result.clips : [];
+  setStudioStreamersFromClips(studioMakeClipState.clips);
+}
+
+function getStudioMakeClipPayload() {
+  return {
+    channelId: studioMakeClipState.channelId,
+    dateFilter: "ALL",
+    orderFilter: "LATEST",
+  };
+}
+
+function preloadStudioMakeClips() {
+  if (
+    !studioMakeClipState.channelId ||
+    studioMakeClipState.preloaded ||
+    studioMakeClipState.preloadPromise
+  ) {
+    return studioMakeClipState.preloadPromise;
+  }
+
+  const channelId = studioMakeClipState.channelId;
+  studioMakeClipState.preloadError = "";
+  studioMakeClipState.preloadPromise = sendMessage({
+    type: "CHEESE_SEARCH_FETCH_MAKE_CLIPS",
+    payload: getStudioMakeClipPayload(),
+  })
+    .then((result) => {
+      if (studioMakeClipState.channelId !== channelId) return result;
+      applyStudioMakeClipResult(result);
+      studioMakeClipState.preloaded = true;
+      updateStudioMakeClipControls();
+      return result;
+    })
+    .catch((error) => {
+      if (studioMakeClipState.channelId === channelId) {
+        studioMakeClipState.preloadError =
+          error instanceof Error ? error.message : String(error);
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (studioMakeClipState.channelId === channelId) {
+        studioMakeClipState.preloadPromise = null;
+      }
+    });
+
+  studioMakeClipState.preloadPromise.catch(() => {
+    // 선로딩 실패는 검색 버튼을 누를 때 기존 오류 UI로 다시 안내한다.
+  });
+  return studioMakeClipState.preloadPromise;
+}
+
+async function getStudioMakeClipResultForSearch() {
+  if (studioMakeClipState.preloadPromise) {
+    try {
+      return await studioMakeClipState.preloadPromise;
+    } catch {
+      // 검색 동작에서는 아래의 직접 호출 결과로 오류를 표시한다.
+    }
+  }
+
+  if (studioMakeClipState.preloaded) {
+    return {
+      channelId: studioMakeClipState.channelId,
+      contentType: "makeClips",
+      totalCount: studioMakeClipState.clips.length,
+      totalPages: 1,
+      fetchedAt: Date.now(),
+      clips: studioMakeClipState.clips,
+    };
+  }
+
+  return sendMessage({
+    type: "CHEESE_SEARCH_FETCH_MAKE_CLIPS",
+    payload: getStudioMakeClipPayload(),
+  });
+}
+
+function getStudioSortOptions() {
+  return [
+    { value: "latest", label: "최신순" },
+    { value: "oldest", label: "오래된순" },
+    { value: "popular", label: "조회순" },
+    { value: "comments", label: "댓글 많은순" },
+  ];
+}
+
+function createStudioChevronIcon() {
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none" class="_icon_arrow_14lz7_35"><path fill="currentColor" fill-rule="evenodd" d="M.21 2.209a.715.715 0 0 1 1.01 0L5 5.983 8.78 2.21a.715.715 0 0 1 1.01 0 .712.712 0 0 1 0 1.008L5 8 .21 3.217a.712.712 0 0 1 0-1.008Z" clip-rule="evenodd"></path></svg>
+  `;
+}
+
+const scheduleStudioMakeClipSearch = debounce(() => {
+  renderOrActivateStudioMakeClipSearch();
+}, 180);
+
+function handleStudioQueryInput(event) {
+  studioMakeClipState.query = event.currentTarget.value;
+  updateStudioMakeClipControls();
+  scheduleStudioMakeClipSearch();
+}
+
+function handleStudioDateFilterChange(shell) {
+  studioMakeClipState.dateFrom = shell.dataset.dateFrom || "";
+  studioMakeClipState.dateTo = shell.dataset.dateTo || "";
+  updateStudioMakeClipControls(shell);
+  renderOrActivateStudioMakeClipSearch();
+}
+
+function renderOrActivateStudioMakeClipSearch() {
+  if (studioMakeClipState.hasLoaded) {
+    resetStudioVisibleResults();
+    renderStudioMakeClipResults();
+    return;
+  }
+  void activateStudioMakeClipSearch();
+}
+
+function handleStudioControlClick(event) {
+  const target = event.target.closest(
+    "[data-studio-action], [data-studio-streamer-value], [data-studio-sort-value]",
+  );
+  if (!target) return;
+
+  if (target.dataset.studioStreamerValue != null) {
+    event.preventDefault();
+    studioMakeClipState.streamer = target.dataset.studioStreamerValue || "all";
+    closeStudioMenus();
+    closeStudioMoreMenus();
+    updateStudioMakeClipControls();
+    renderOrActivateStudioMakeClipSearch();
+    return;
+  }
+
+  if (target.dataset.studioSortValue != null) {
+    event.preventDefault();
+    studioMakeClipState.sort = target.dataset.studioSortValue || "latest";
+    studioMakeClipState.tableSortField = "";
+    closeStudioMenus();
+    closeStudioMoreMenus();
+    updateStudioMakeClipControls();
+    updateStudioHeaderSortState();
+    renderOrActivateStudioMakeClipSearch();
+    return;
+  }
+
+  const action = target.dataset.studioAction;
+  if (action === "query-reset") {
+    event.preventDefault();
+    handleStudioQueryReset();
+    return;
+  }
+  if (action === "streamer-toggle" || action === "sort-toggle") {
+    event.preventDefault();
+    closeStudioMoreMenus();
+    toggleStudioMenu(action === "streamer-toggle" ? "streamer" : "sort");
+    return;
+  }
+  if (action === "reset") {
+    event.preventDefault();
+    handleStudioReset();
+  }
+}
+
+function handleStudioDocumentClick(event) {
+  const moreToggle = event.target.closest("[data-studio-more-toggle]");
+  if (moreToggle) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleStudioMoreMenu(moreToggle);
+    return;
+  }
+
+  const moreAction = event.target.closest("[data-studio-more-action]");
+  if (moreAction) {
+    handleStudioMoreAction(event, moreAction);
+    return;
+  }
+
+  if (event.target.closest(".cheese-search-studio-more-menu")) return;
+  if (event.target.closest(".cheese-search-studio-shell")) {
+    closeStudioMoreMenus();
+    return;
+  }
+  closeStudioMenus();
+  closeStudioMoreMenus();
+}
+
+function handleStudioQueryReset() {
+  studioMakeClipState.query = "";
+  updateStudioMakeClipControls();
+  renderOrActivateStudioMakeClipSearch();
+}
+
+function handleStudioReset() {
+  studioMakeClipState.query = "";
+  studioMakeClipState.dateFrom = "";
+  studioMakeClipState.dateTo = "";
+  studioMakeClipState.streamer = "all";
+  studioMakeClipState.sort = "latest";
+  studioMakeClipState.tableSortField = "";
+  studioMakeClipState.tableSortDirection = "asc";
+  studioMakeClipState.hasLoaded = false;
+  studioMakeClipState.loading = false;
+  studioMakeClipState.error = "";
+  studioMakeClipState.resultSignature = "";
+  studioMakeClipState.visibleCount = RESULT_INITIAL_RENDER_COUNT;
+  document.querySelector(".cheese-search-studio-summary")?.remove();
+  restoreStudioOriginalRows();
+  showStudioOriginalView();
+  closeStudioMenus();
+  updateStudioMakeClipControls();
+  updateStudioHeaderSortState();
+}
+
+function toggleStudioMenu(type) {
+  const shell = document.querySelector(".cheese-search-studio-shell");
+  if (!shell) return;
+  updateStudioMakeClipControls(shell);
+  const select = shell.querySelector(`[data-studio-select="${type}"]`);
+  const button = select?.querySelector("button");
+  const menu = select?.querySelector(".cheese-search-studio-menu");
+  if (!button || !menu) return;
+  const willOpen = menu.hidden;
+  closeStudioMenus();
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", String(willOpen));
+}
+
+function closeStudioMenus() {
+  document
+    .querySelectorAll(".cheese-search-studio-select-button")
+    .forEach((button) => {
+      button.setAttribute("aria-expanded", "false");
+    });
+  document.querySelectorAll(".cheese-search-studio-menu").forEach((menu) => {
+    menu.hidden = true;
+  });
+}
+
+function toggleStudioMoreMenu(button) {
+  const container = button.closest(".cheese-search-studio-more");
+  const menu = container?.querySelector(".cheese-search-studio-more-menu");
+  if (!menu) return;
+  const willOpen = menu.hidden;
+  closeStudioMenus();
+  closeStudioMoreMenus();
+  menu.hidden = !willOpen;
+  button.setAttribute("aria-expanded", String(willOpen));
+}
+
+function handleStudioMoreCaptureClick(event) {
+  if (!event.target.closest("[data-cheese-studio-row]")) return;
+
+  const moreToggle = event.target.closest("[data-studio-more-toggle]");
+  if (moreToggle) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    toggleStudioMoreMenu(moreToggle);
+    return;
+  }
+
+  const moreAction = event.target.closest("[data-studio-more-action]");
+  if (moreAction) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+    handleStudioMoreAction(event, moreAction);
+    return;
+  }
+
+  if (event.target.closest(".cheese-search-studio-more-menu")) {
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+  }
+}
+
+function closeStudioMoreMenus() {
+  document.querySelectorAll("[data-studio-more-toggle]").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+  document
+    .querySelectorAll(".cheese-search-studio-more-menu")
+    .forEach((menu) => {
+      menu.hidden = true;
+    });
+}
+
+async function handleStudioMoreAction(event, target) {
+  event.stopPropagation();
+  const action = target.dataset.studioMoreAction;
+  if (action === "delete") {
+    event.preventDefault();
+    closeStudioMoreMenus();
+    openStudioDeleteClipDialog({
+      clipUID: target.dataset.clipUid,
+      title: target.dataset.clipTitle,
+      thumbnailUrl: target.dataset.thumbnailUrl,
+      duration: target.dataset.duration,
+    });
+    return;
+  }
+  event.preventDefault();
+  const text =
+    action === "copy-link"
+      ? target.dataset.clipUrl
+      : action === "copy-iframe"
+        ? target.dataset.iframe
+        : "";
+  if (!text) return;
+  const successMessage =
+    action === "copy-iframe"
+      ? "iframe 코드를 복사하였습니다."
+      : "URL을 복사하였습니다.";
+
+  try {
+    await copyStudioTextToClipboard(text);
+    showStudioGlobalToast(successMessage);
+  } catch {
+    showStudioGlobalToast("복사하지 못했습니다.");
+  }
+}
+
+async function copyStudioTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
+function showStudioGlobalToast(message) {
+  document.querySelector("[data-cheese-studio-toast]")?.remove();
+  const toast = document.createElement("p");
+  toast.className = "_container_1xoov_1 _is_global_1xoov_26";
+  toast.dataset.cheeseStudioToast = "1";
+  toast.setAttribute("role", "alert");
+  toast.textContent = message;
+  document.body.append(toast);
+  setTimeout(() => {
+    toast.dataset.hiding = "true";
+    setTimeout(() => {
+      toast.remove();
+    }, 260);
+  }, 1900);
+}
+
+function openStudioDeleteClipDialog({
+  clipUID,
+  title,
+  thumbnailUrl,
+  duration,
+}) {
+  const normalizedClipUID = String(clipUID || "").trim();
+  if (!normalizedClipUID) return;
+
+  document.querySelector(".cheese-search-studio-delete-modal")?.remove();
+  const modal = document.createElement("div");
+  modal.className = "_dimmed_1h6ic_2 cheese-search-studio-delete-modal";
+  modal.innerHTML = `
+    <div class="_container_1h6ic_15" role="alertdialog" aria-modal="true" style="width: 370px;">
+      <strong class="_title_1h6ic_37">클립 삭제하기</strong>
+      <div class="_content_1h6ic_30">
+        <div class="_inner_1h6ic_31">
+          <div class="_area_5ezr8_1">
+            <div class="_box_5ezr8_5">
+              <div class="_thumbnail_5ezr8_15"${thumbnailUrl ? ` style="background: url('${escapeAttribute(thumbnailUrl)}') center center / cover no-repeat;"` : ""}>
+                <em class="_container_ckvt1_1">${escapeHtml(duration || "0:00")}</em>
+              </div>
+              <p class="_title_5ezr8_37">${escapeHtml(title || " ")}</p>
+            </div>
+            <div class="_text_5ezr8_52">
+              <label for="delete-checkbox" class="_container_pykbt_2">
+                <input type="checkbox" class="_input_pykbt_51 blind" name="delete-checkbox" id="delete-checkbox" data-studio-delete-check>
+                <i class="_icon_pykbt_26">
+                  <svg width="10" height="8" viewBox="0 0 10 8" fill="none" xmlns="http://www.w3.org/2000/svg" class="_check_pykbt_55"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.01008 0.993245C9.40757 1.34657 9.44337 1.95523 9.09005 2.35272L4.94192 7.01937C4.60149 7.40235 4.02077 7.45166 3.62064 7.13156L1.02806 5.05749C0.612777 4.72526 0.545446 4.11928 0.877676 3.70399C1.20991 3.28871 1.81589 3.22137 2.23117 3.5536L4.10986 5.05655L7.6506 1.07321C8.00393 0.675721 8.61259 0.639918 9.01008 0.993245Z" fill="white"></path></svg>
+                </i>
+                <span class="_label_pykbt_23">삭제된 동영상은 되돌릴 수 없습니다.</span>
+              </label>
+            </div>
+            <p class="cheese-search-studio-delete-error" data-studio-delete-error hidden></p>
+          </div>
+        </div>
+      </div>
+      <div class="_footer_1h6ic_129 _default_1h6ic_21">
+        <div class="_box_1h6ic_42"><button type="button" class="_container_1rfm5_2 _largest_1rfm5_27 _light_1rfm5_58" data-studio-delete-cancel><span class="_inner_1rfm5_116">취소</span></button></div>
+        <div class="_box_1h6ic_42"><button type="button" disabled class="_container_1rfm5_2 _largest_1rfm5_27 _dark_1rfm5_47 _is_disabled_1rfm5_24" data-studio-delete-confirm data-clip-uid="${escapeAttribute(normalizedClipUID)}"><span class="_inner_1rfm5_116">삭제</span></button></div>
+      </div>
+      <button type="button" class="_button_1h6ic_45" data-studio-delete-cancel>
+        <svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg" class="_icon_close_1h6ic_169"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.79289 7.79289C8.18342 7.40237 8.81658 7.40237 9.20711 7.79289L22.2071 20.7929C22.5976 21.1834 22.5976 21.8166 22.2071 22.2071C21.8166 22.5976 21.1834 22.5976 20.7929 22.2071L7.79289 9.20711C7.40237 8.81658 7.40237 8.18342 7.79289 7.79289Z" fill="#2E3033"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M7.79289 22.2071C7.40237 21.8166 7.40237 21.1834 7.79289 20.7929L20.7929 7.79289C21.1834 7.40237 21.8166 7.40237 22.2071 7.79289C22.5976 8.18342 22.5976 8.81658 22.2071 9.20711L9.20711 22.2071C8.81658 22.5976 8.18342 22.5976 7.79289 22.2071Z" fill="#2E3033"></path></svg>
+        <span class="blind">팝업 닫기</span>
+      </button>
+    </div>
+  `;
+  document.body.append(modal);
+
+  const checkbox = modal.querySelector("[data-studio-delete-check]");
+  const confirmButton = modal.querySelector("[data-studio-delete-confirm]");
+  checkbox?.addEventListener("change", () => {
+    const checked = Boolean(checkbox.checked);
+    confirmButton.disabled = !checked;
+    confirmButton.classList.toggle("_is_disabled_1rfm5_24", !checked);
+  });
+  modal.querySelectorAll("[data-studio-delete-cancel]").forEach((button) => {
+    button.addEventListener("click", closeStudioDeleteClipDialog);
+  });
+  confirmButton?.addEventListener("click", handleStudioDeleteClipConfirm);
+}
+
+function closeStudioDeleteClipDialog() {
+  document.querySelector(".cheese-search-studio-delete-modal")?.remove();
+}
+
+async function deleteStudioMakeClip({ channelId, clipUID }) {
+  try {
+    return await deleteStudioMakeClipFromContent({ channelId, clipUID });
+  } catch (error) {
+    if (error?.status === 403) {
+      await warmStudioMakeClipSessionFromContent(channelId);
+      await wait(300);
+      try {
+        return await deleteStudioMakeClipFromContent({ channelId, clipUID });
+      } catch (retryError) {
+        if (retryError?.status !== 403) throw retryError;
+      }
+    } else if (error?.status) {
+      throw error;
+    }
+  }
+
+  return sendMessage({
+    type: "CHEESE_SEARCH_DELETE_MAKE_CLIP",
+    payload: {
+      channelId,
+      clipUID,
+    },
+  });
+}
+
+async function deleteStudioMakeClipFromContent({ channelId, clipUID }) {
+  const normalizedChannelId = String(channelId || "").trim();
+  const normalizedClipUID = String(clipUID || "").trim();
+  if (!normalizedChannelId) throw new Error("채널 ID를 확인할 수 없습니다.");
+  if (!normalizedClipUID) throw new Error("클립 ID를 확인할 수 없습니다.");
+
+  const response = await fetch(
+    `${STUDIO_MANAGE_API_BASE}/channels/${encodeURIComponent(normalizedChannelId)}/clips/${encodeURIComponent(normalizedClipUID)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: {
+        accept: "application/json, text/plain, */*",
+      },
+    },
+  );
+  return readStudioMutationResponse(response, "CHZZK 클립 삭제 요청 실패");
+}
+
+async function warmStudioMakeClipSessionFromContent(channelId) {
+  const normalizedChannelId = String(channelId || "").trim();
+  if (!normalizedChannelId) return;
+  const url = new URL(
+    `${STUDIO_MANAGE_API_BASE}/channels/${encodeURIComponent(normalizedChannelId)}/clips/make-clips`,
+  );
+  url.searchParams.set("page", "0");
+  url.searchParams.set("size", "1");
+  url.searchParams.set("dateFilter", "ALL");
+  url.searchParams.set("orderFilter", "LATEST");
+  await fetch(url.toString(), {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      accept: "application/json, text/plain, */*",
+    },
+  }).catch(() => {});
+}
+
+async function readStudioMutationResponse(response, fallbackMessage) {
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+  if (!response.ok || (payload && Number(payload.code) !== 200)) {
+    const error = new Error(
+      payload?.message || `${fallbackMessage}: HTTP ${response.status}`,
+    );
+    error.status = response.status;
+    throw error;
+  }
+  return payload?.content || {};
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function handleStudioDeleteClipConfirm(event) {
+  const button = event.currentTarget;
+  const clipUID = String(button.dataset.clipUid || "").trim();
+  if (!clipUID || button.disabled) return;
+  const modal = button.closest(".cheese-search-studio-delete-modal");
+  const error = modal?.querySelector("[data-studio-delete-error]");
+  button.disabled = true;
+  button.classList.add("_is_disabled_1rfm5_24");
+  const label = button.querySelector("._inner_1rfm5_116");
+  if (label) label.textContent = "삭제 중";
+  if (error) {
+    error.hidden = true;
+    error.textContent = "";
+  }
+
+  try {
+    await deleteStudioMakeClip({
+      channelId: studioMakeClipState.channelId,
+      clipUID,
+    });
+    applyStudioMakeClipDeletion(clipUID);
+    closeStudioDeleteClipDialog();
+  } catch (deleteError) {
+    if (error) {
+      error.textContent =
+        deleteError instanceof Error
+          ? deleteError.message
+          : "클립 삭제에 실패했습니다.";
+      error.hidden = false;
+    }
+    button.disabled = false;
+    button.classList.remove("_is_disabled_1rfm5_24");
+    if (label) label.textContent = "삭제";
+  }
+}
+
+function applyStudioMakeClipDeletion(clipUID) {
+  const normalizedClipUID = String(clipUID || "").trim();
+  if (!normalizedClipUID) return;
+  studioMakeClipState.deletedClipUIDs.add(normalizedClipUID);
+  studioMakeClipState.clips = studioMakeClipState.clips.filter(
+    (clip) => String(clip?.clipUID || "").trim() !== normalizedClipUID,
+  );
+  setStudioStreamersFromClips(studioMakeClipState.clips);
+  resetStudioVisibleResults();
+  updateStudioMakeClipControls();
+  hideDeletedStudioOriginalRows();
+  if (studioMakeClipState.hasLoaded) {
+    renderStudioMakeClipResults();
+  }
+}
+
+async function activateStudioMakeClipSearch() {
+  if (!studioMakeClipState.channelId || studioMakeClipState.loading) return;
+  studioMakeClipState.loading = true;
+  studioMakeClipState.error = "";
+  updateStudioMakeClipControls();
+  hideStudioPagination();
+  renderStudioMakeClipStatus("내가 만든 클립을 불러오는 중입니다.");
+
+  try {
+    const result = await getStudioMakeClipResultForSearch();
+    applyStudioMakeClipResult(result);
+    studioMakeClipState.preloaded = true;
+    studioMakeClipState.hasLoaded = true;
+    studioMakeClipState.loading = false;
+    resetStudioVisibleResults();
+    if (!getStudioMakeClipContext()) return;
+    updateStudioMakeClipControls();
+    renderStudioMakeClipResults();
+  } catch (error) {
+    studioMakeClipState.loading = false;
+    studioMakeClipState.error =
+      error instanceof Error ? error.message : String(error);
+    if (!getStudioMakeClipContext()) return;
+    updateStudioMakeClipControls();
+    renderStudioMakeClipStatus(
+      `내가 만든 클립을 불러오지 못했습니다. ${studioMakeClipState.error}`,
+      true,
+    );
+  }
+}
+
+function hideStudioOriginalView() {
+  const table = document.getElementById("make_clip_panel");
+  if (table) hideOriginalElement(table);
+  hideStudioPagination();
+}
+
+function hideStudioPagination() {
+  const table = document.getElementById("make_clip_panel");
+  const pagination = table?.parentElement
+    ?.querySelector('nav[aria-label="pagination"]')
+    ?.closest("div");
+  if (pagination) hideOriginalElement(pagination);
+}
+
+function showStudioOriginalView() {
+  const table = document.getElementById("make_clip_panel");
+  if (table) showOriginalElement(table);
+  showStudioPagination();
+}
+
+function showStudioPagination() {
+  const table = document.getElementById("make_clip_panel");
+  const pagination = table?.parentElement
+    ?.querySelector('nav[aria-label="pagination"]')
+    ?.closest("div");
+  if (pagination) showOriginalElement(pagination);
+}
+
+function ensureStudioMakeClipSummary() {
+  let result = document.querySelector(".cheese-search-studio-summary");
+  const shell = document.querySelector(".cheese-search-studio-shell");
+  if (result) {
+    if (shell && result.previousElementSibling !== shell) {
+      shell.after(result);
+    }
+    showOriginalElement(result);
+    return result;
+  }
+  result = document.createElement("div");
+  result.className = "cheese-search-studio-summary";
+  shell?.after(result);
+  return result;
+}
+
+function renderStudioMakeClipStatus(message, isError = false) {
+  showStudioOriginalView();
+  hideStudioPagination();
+  const summary = ensureStudioMakeClipSummary();
+  summary.textContent = "";
+  renderStudioTableMessage(message, isError);
+}
+
+function renderStudioMakeClipResults() {
+  showStudioOriginalView();
+  hideStudioPagination();
+  const summary = ensureStudioMakeClipSummary();
+  const filtered = getFilteredStudioMakeClips();
+  const signature = getStudioMakeClipResultSignature();
+  if (studioMakeClipState.resultSignature !== signature) {
+    studioMakeClipState.resultSignature = signature;
+    studioMakeClipState.visibleCount = RESULT_INITIAL_RENDER_COUNT;
+  }
+  updateStudioMakeClipSummary(summary, filtered);
+  if (!filtered.length) {
+    renderStudioTableMessage("검색 조건에 맞는 클립이 없습니다.");
+    return;
+  }
+
+  const table = document.getElementById("make_clip_panel");
+  const tbody = table?.tBodies?.[0];
+  if (!tbody) return;
+  const visible = filtered.slice(0, studioMakeClipState.visibleCount);
+  replaceStudioRenderedRows(visible.map(renderStudioMakeClipRow).join(""));
+}
+
+function updateStudioMakeClipSummary(summary, filtered) {
+  const visibleCount = Math.min(
+    filtered.length,
+    studioMakeClipState.visibleCount,
+  );
+  const visibleText =
+    visibleCount < filtered.length
+      ? ` · ${visibleCount.toLocaleString("ko-KR")}개 표시 중`
+      : "";
+  summary.textContent = `검색 결과 ${filtered.length.toLocaleString("ko-KR")}개 / 전체 ${studioMakeClipState.clips.length.toLocaleString("ko-KR")}개${visibleText}`;
+}
+
+function getStudioMakeClipResultSignature() {
+  return [
+    studioMakeClipState.query,
+    studioMakeClipState.dateFrom,
+    studioMakeClipState.dateTo,
+    studioMakeClipState.streamer,
+    studioMakeClipState.sort,
+    studioMakeClipState.tableSortField,
+    studioMakeClipState.tableSortDirection,
+    studioMakeClipState.clips.length,
+  ].join("|");
+}
+
+function resetStudioVisibleResults() {
+  studioMakeClipState.resultSignature = "";
+  studioMakeClipState.visibleCount = RESULT_INITIAL_RENDER_COUNT;
+}
+
+function getFilteredStudioMakeClips() {
+  const dateFrom = studioMakeClipState.dateFrom
+    ? getDayStart(studioMakeClipState.dateFrom)
+    : 0;
+  const dateTo = studioMakeClipState.dateTo
+    ? getDayEnd(studioMakeClipState.dateTo)
+    : 0;
+  const searchOptions = {
+    useTags: false,
+    fields: [
+      "clipTitle",
+      (clip) => clip?.makeChannel?.channelName,
+      (clip) => clip?.makeChannel?.channelId,
+    ],
+    categoryFields: [(clip) => clip?.makeChannel?.channelName],
+  };
+  return studioMakeClipState.clips
+    .filter((clip) => {
+      const clipUID = String(clip?.clipUID || "").trim();
+      if (clipUID && studioMakeClipState.deletedClipUIDs.has(clipUID)) {
+        return false;
+      }
+      const clipTime = getItemTime(clip);
+      if (dateFrom && clipTime < dateFrom) return false;
+      if (dateTo && clipTime > dateTo) return false;
+      const channelId = String(clip?.makeChannel?.channelId || "").trim();
+      if (
+        studioMakeClipState.streamer !== "all" &&
+        channelId !== studioMakeClipState.streamer
+      ) {
+        return false;
+      }
+      return CheeseSearchQuery.matches(
+        clip,
+        studioMakeClipState.query,
+        searchOptions,
+      );
+    })
+    .sort(compareStudioMakeClips);
+}
+
+function compareStudioMakeClips(a, b) {
+  if (studioMakeClipState.tableSortField === "title") {
+    const direction =
+      studioMakeClipState.tableSortDirection === "desc" ? -1 : 1;
+    return (
+      direction * compareStudioText(a?.clipTitle, b?.clipTitle) ||
+      compareStudioText(
+        a?.makeChannel?.channelName,
+        b?.makeChannel?.channelName,
+      ) ||
+      getItemTime(b) - getItemTime(a)
+    );
+  }
+  if (studioMakeClipState.tableSortField === "channel") {
+    const direction =
+      studioMakeClipState.tableSortDirection === "desc" ? -1 : 1;
+    return (
+      direction *
+        compareStudioText(
+          a?.makeChannel?.channelName,
+          b?.makeChannel?.channelName,
+        ) ||
+      compareStudioText(a?.clipTitle, b?.clipTitle) ||
+      getItemTime(b) - getItemTime(a)
+    );
+  }
+  if (studioMakeClipState.sort === "popular") {
+    return getViewCount(b) - getViewCount(a) || getItemTime(b) - getItemTime(a);
+  }
+  if (studioMakeClipState.sort === "comments") {
+    return (
+      getCommentCount(b) - getCommentCount(a) || getItemTime(b) - getItemTime(a)
+    );
+  }
+  if (studioMakeClipState.sort === "oldest") {
+    return getItemTime(a) - getItemTime(b);
+  }
+  return getItemTime(b) - getItemTime(a);
+}
+
+function compareStudioText(a, b) {
+  return String(a || "").localeCompare(String(b || ""), "ko-KR", {
+    numeric: true,
+  });
+}
+
+function renderStudioMakeClipRow(clip) {
+  const title = String(clip?.clipTitle || "제목 없음");
+  const manageUrl = getStudioMakeClipManageUrl(clip);
+  const clipUrl = getStudioMakeClipPublicUrl(clip);
+  const iframeCode = getStudioMakeClipIframeCode(clip);
+  const thumbnailUrl = getStudioMakeClipThumbnailUrl(clip);
+  const channelName = String(clip?.makeChannel?.channelName || "-");
+  const channelId = String(clip?.makeChannel?.channelId || "").trim();
+  const channelUrl = channelId ? `https://chzzk.naver.com/${channelId}` : "";
+  const createdDate =
+    String(clip?.createdDate || "") || formatClipCreatedDate(clip);
+  const readCount = formatCount(clip?.readCount);
+  const commentCount = Number(clip?.commentCount || 0);
+  return `
+    <tr data-cheese-studio-row>
+      <td class="_align_left_rynbv_72">
+        <div class="_area_1lzgi_1">
+          <a rel="noreferrer" class="_link_1lzgi_8" href="${escapeAttribute(manageUrl)}" target="_self"><span class="blind">동영상 관리로 이동</span></a>
+          <a type="button" class="_component_rynbv_139" href="${escapeAttribute(manageUrl)}" target="_self">
+            <div class="_thumbnail_rynbv_175 _is_large_rynbv_198 _is_clip_rynbv_203"${thumbnailUrl ? ` style="background-image:url('${escapeAttribute(thumbnailUrl)}')"` : ""}>
+              <em class="_container_ckvt1_1">${escapeHtml(formatSeconds(clip?.duration))}</em>
+            </div>
+            <div class="_information_rynbv_243">
+              <span class="_text_rynbv_129 _title_1lzgi_4">
+                <span class="_ellipsis2_rynbv_257 _break_spaces_rynbv_273">${escapeHtml(title)}</span>
+              </span>
+              <div class="_lightgray_rynbv_289">
+                <div class="_box_1lzgi_20">
+                  <div class="_item_1lzgi_29">
+                    ${renderStudioCalendarIcon()}
+                    <span class="blind">등록일</span>${escapeHtml(createdDate)}
+                  </div>
+                  <div class="_item_1lzgi_29">
+                    ${renderStudioViewIcon()}
+                    <span class="blind">조회수</span>${readCount}
+                  </div>
+                  <div class="_item_1lzgi_29">
+                    ${renderStudioCommentIcon()}
+                    <span class="blind">댓글</span>${formatCount(commentCount)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </a>
+        </div>
+      </td>
+      <td class="">
+        ${
+          channelUrl
+            ? `<a href="${escapeAttribute(channelUrl)}" class="_link_text_1lzgi_16" target="_blank" rel="noreferrer"><span class="_text_rynbv_129"><span class="_ellipsis2_rynbv_257">${escapeHtml(channelName)}</span></span></a>`
+            : `<span class="_text_rynbv_129"><span class="_ellipsis2_rynbv_257">${escapeHtml(channelName)}</span></span>`
+        }
+      </td>
+      <td class="_align_right_rynbv_84">
+        <div class="_button_box_1lzgi_102">
+          <div class="_button_1lzgi_102">
+            <a class="_container_1rfm5_2 _small_1rfm5_42 _light_1rfm5_58" href="${escapeAttribute(manageUrl)}" target="_self">
+              <span class="_inner_1rfm5_116">관리</span>
+            </a>
+          </div>
+          <div class="_button_1lzgi_102">
+            <div class="_container_12tks_2 cheese-search-studio-more">
+              <button type="button" class="_component_12tks_8" aria-expanded="false" aria-haspopup="listbox" aria-controls="more-button-listbox" data-studio-more-toggle>
+                <i class="_inner_12tks_18"><span></span><span></span><span></span><span class="blind">더보기</span></i>
+              </button>
+              <ul class="_layer_12tks_62 cheese-search-studio-more-menu" id="more-button-listbox" role="listbox" hidden>
+                <li class="_item_12tks_79" role="presentation">
+                  <button type="button" class="_option_12tks_83" data-studio-more-action="copy-link" data-clip-url="${escapeAttribute(clipUrl)}">
+                    <span>${renderStudioLinkIcon()}<span data-studio-more-label>공유할 링크 복사</span></span>
+                  </button>
+                </li>
+                <li class="_item_12tks_79" role="presentation">
+                  <button type="button" class="_option_12tks_83" data-studio-more-action="copy-iframe" data-iframe="${escapeAttribute(iframeCode)}">
+                    <span>${renderStudioEmbedIcon()}<span data-studio-more-label>동영상 퍼가기 (iframe)</span></span>
+                  </button>
+                </li>
+                <li class="_item_12tks_79" role="presentation">
+                  <button type="button" class="_option_12tks_83 _highlight_12tks_111" data-studio-more-action="delete" data-clip-uid="${escapeAttribute(String(clip?.clipUID || ""))}" data-clip-title="${escapeAttribute(title)}" data-thumbnail-url="${escapeAttribute(thumbnailUrl)}" data-duration="${escapeAttribute(formatSeconds(clip?.duration))}">
+                    ${renderStudioDeleteIcon()}<span data-studio-more-label>이 클립 삭제하기</span>
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderStudioCalendarIcon() {
+  return `<svg width="13" height="15" viewBox="0 0 13 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="_icon_1lzgi_47"><path fill-rule="evenodd" clip-rule="evenodd" d="M0.5 6C0.5 4.34315 1.84315 3 3.5 3H9.5C11.1569 3 12.5 4.34315 12.5 6V10C12.5 11.6569 11.1569 13 9.5 13H3.5C1.84315 13 0.5 11.6569 0.5 10V6ZM3.5 4C2.39543 4 1.5 4.89543 1.5 6V10C1.5 11.1046 2.39543 12 3.5 12H9.5C10.6046 12 11.5 11.1046 11.5 10V6C11.5 4.89543 10.6046 4 9.5 4H3.5Z" fill="#AEB4C2"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M12 6.5H1V5.5H12V6.5Z" fill="#AEB4C2"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C3.72386 5 3.5 4.77614 3.5 4.5L3.5 2.5C3.5 2.22386 3.72386 2 4 2C4.27614 2 4.5 2.22386 4.5 2.5L4.5 4.5C4.5 4.77614 4.27614 5 4 5Z" fill="#AEB4C2"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M9 5C8.72386 5 8.5 4.77614 8.5 4.5L8.5 2.5C8.5 2.22386 8.72386 2 9 2C9.27614 2 9.5 2.22386 9.5 2.5L9.5 4.5C9.5 4.77614 9.27614 5 9 5Z" fill="#AEB4C2"></path><circle cx="3.5" cy="8" r="0.5" fill="#AEB4C2"></circle><circle cx="6.5" cy="8" r="0.5" fill="#AEB4C2"></circle><circle cx="9.5" cy="8" r="0.5" fill="#AEB4C2"></circle><circle cx="3.5" cy="10" r="0.5" fill="#AEB4C2"></circle><circle cx="6.5" cy="10" r="0.5" fill="#AEB4C2"></circle><circle cx="9.5" cy="10" r="0.5" fill="#AEB4C2"></circle></svg>`;
+}
+
+function renderStudioViewIcon() {
+  return `<svg width="10" height="16" viewBox="0 0 10 16" fill="none" xmlns="http://www.w3.org/2000/svg" class="_icon_view_1lzgi_98"><rect y="1.5" width="10" height="14" fill="#D9D9D9" fill-opacity="0.06"></rect><path fill-rule="evenodd" clip-rule="evenodd" d="M8.53998 7.63062C9.15334 8.03518 9.15334 8.96482 8.53998 9.36938L2.52328 13.3378C1.86308 13.7733 1 13.2807 1 12.4684L1 4.53155C1 3.7193 1.86308 3.22672 2.52328 3.66218L8.53998 7.63062ZM8.00835 8.5L1.99165 4.53155L1.99165 12.4684L8.00835 8.5Z" fill="#AEB4C2"></path></svg>`;
+}
+
+function renderStudioCommentIcon() {
+  return `<svg width="13" height="15" viewBox="0 0 13 15" fill="none" xmlns="http://www.w3.org/2000/svg" class="_icon_1lzgi_47"><path fill-rule="evenodd" clip-rule="evenodd" d="M5.95675 2.44516C3.35646 2.44516 1.26865 4.49537 1.26865 6.99993C1.26865 9.50448 3.35646 11.5547 5.95675 11.5547H10.7282L9.62411 10.4793C9.45717 10.3167 9.44386 10.0529 9.59359 9.87429C10.2518 9.08919 10.6448 8.08912 10.6448 6.99993C10.6448 4.49537 8.55703 2.44516 5.95675 2.44516ZM0.378174 6.99993C0.378174 3.98163 2.8869 1.55469 5.95675 1.55469C9.02659 1.55469 11.5353 3.98163 11.5353 6.99993C11.5353 8.16051 11.163 9.23616 10.5302 10.1188L12.1341 11.681C12.2638 11.8074 12.3041 11.9998 12.2359 12.1676C12.1677 12.3354 12.0046 12.4452 11.8234 12.4452H5.95675C2.8869 12.4452 0.378174 10.0182 0.378174 6.99993Z" fill="#AEB4C2"></path><path d="M4.4901 7.13299C4.4901 7.538 4.16178 7.86632 3.75677 7.86632C3.35176 7.86632 3.02344 7.538 3.02344 7.13299C3.02344 6.72798 3.35176 6.39966 3.75677 6.39966C4.16178 6.39966 4.4901 6.72798 4.4901 7.13299Z" fill="#AEB4C2"></path><path d="M6.6903 7.13299C6.6903 7.538 6.36197 7.86632 5.95697 7.86632C5.55196 7.86632 5.22363 7.538 5.22363 7.13299C5.22363 6.72798 5.55196 6.39966 5.95697 6.39966C6.36197 6.39966 6.6903 6.72798 6.6903 7.13299Z" fill="#AEB4C2"></path><path d="M8.89025 7.13299C8.89025 7.538 8.56193 7.86632 8.15692 7.86632C7.75191 7.86632 7.42358 7.538 7.42358 7.13299C7.42358 6.72798 7.75191 6.39966 8.15692 6.39966C8.56193 6.39966 8.89025 6.72798 8.89025 7.13299Z" fill="#AEB4C2"></path></svg>`;
+}
+
+function renderStudioLinkIcon() {
+  return `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M10.1014 8.17786C9.08605 7.1625 7.43983 7.1625 6.42446 8.17786L3.73746 10.8649C2.72209 11.8802 2.72209 13.5265 3.73746 14.5418C4.75282 15.5572 6.39905 15.5572 7.41441 14.5418L8.75791 13.1983" stroke="#525662" stroke-width="1.4" stroke-linecap="round"></path><path d="M8.11318 10.2024C9.12855 11.2178 10.7748 11.2178 11.7901 10.2024L14.4771 7.51544C15.4925 6.50008 15.4925 4.85385 14.4771 3.83849C13.4618 2.82312 11.8156 2.82312 10.8002 3.83848L9.45669 5.18199" stroke="#525662" stroke-width="1.4" stroke-linecap="round"></path></svg>`;
+}
+
+function renderStudioEmbedIcon() {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" aria-hidden="true"><rect width="13.8" height="11.925" x="1.6" y="4.1" stroke="#525662" stroke-width="1.2" rx="1.9"></rect><path fill="#525662" d="M1.938 7.25h13.125v1.2H1.938z"></path><path stroke="#525662" stroke-width="1.2" d="m4.976 7.763 3.75-3.75M9.951 7.763l3.75-3.75"></path><path fill="#525662" fill-rule="evenodd" d="M10.042 11.147a.631.631 0 0 1 0 1.113l-1.7.983c-.472.273-1.084-.041-1.084-.556V10.72c0-.516.612-.83 1.084-.557l1.7.984Z" clip-rule="evenodd"></path></svg>`;
+}
+
+function renderStudioDeleteIcon() {
+  return `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.00768 12.4086L3.3042 6.0773L4.69564 5.9227L5.39911 12.254C5.52854 13.4188 6.51308 14.3 7.68505 14.3H10.3148C11.4868 14.3 12.4713 13.4188 12.6007 12.254L13.3042 5.9227L14.6956 6.0773L13.9922 12.4086C13.784 14.2824 12.2001 15.7 10.3148 15.7H7.68505C5.79971 15.7 4.21588 14.2824 4.00768 12.4086Z" fill="#FF393E"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M9.00005 3.69999C8.28208 3.69999 7.70005 4.28202 7.70005 4.99999V5.99999H6.30005V4.99999C6.30005 3.50882 7.50888 2.29999 9.00005 2.29999C10.4912 2.29999 11.7 3.50882 11.7 4.99999V5.99999H10.3V4.99999C10.3 4.28202 9.71802 3.69999 9.00005 3.69999Z" fill="#FF393E"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M1.30005 5.99999C1.30005 5.61339 1.61345 5.29999 2.00005 5.29999H16C16.3866 5.29999 16.7 5.61339 16.7 5.99999C16.7 6.38659 16.3866 6.69999 16 6.69999H2.00005C1.61345 6.69999 1.30005 6.38659 1.30005 5.99999Z" fill="#FF393E"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M6.99995 12L6.99995 8L8.19995 8L8.19995 12L6.99995 12Z" fill="#FF393E"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M9.99995 12L9.99995 8L11.2 8L11.2 12L9.99995 12Z" fill="#FF393E"></path></svg>`;
+}
+
+function renderStudioTableMessage(message, isError = false) {
+  const table = document.getElementById("make_clip_panel");
+  const tbody = table?.tBodies?.[0];
+  if (!tbody) return;
+  const columnCount = Math.max(1, table.tHead?.rows?.[0]?.cells?.length || 3);
+  replaceStudioRenderedRows(`
+    <tr data-cheese-studio-row>
+      <td colspan="${columnCount}">
+        <p class="cheese-search-studio-status${isError ? " is-error" : ""}">${escapeHtml(message)}</p>
+      </td>
+    </tr>
+  `);
+}
+
+function rememberStudioOriginalRows(table) {
+  const tbody = table?.tBodies?.[0];
+  if (!tbody || studioMakeClipState.originalRows.length) return;
+  studioMakeClipState.originalRows = getStudioNativeRows(tbody);
+}
+
+function restoreStudioOriginalRows() {
+  const table = document.getElementById("make_clip_panel");
+  const tbody = table?.tBodies?.[0];
+  if (!tbody) return;
+  clearStudioRenderedRows(tbody);
+  showStudioOriginalRows(tbody);
+}
+
+function replaceStudioRenderedRows(html) {
+  const table = document.getElementById("make_clip_panel");
+  const tbody = table?.tBodies?.[0];
+  if (!tbody) return;
+  hideStudioOriginalRows(tbody);
+  clearStudioRenderedRows(tbody);
+  tbody.insertAdjacentHTML("beforeend", html);
+}
+
+function clearStudioRenderedRows(
+  tbody = document.getElementById("make_clip_panel")?.tBodies?.[0],
+) {
+  const scope = tbody || document;
+  scope.querySelectorAll("[data-cheese-studio-row]").forEach((row) => {
+    row.remove();
+  });
+}
+
+function getStudioNativeRows(tbody) {
+  return Array.from(tbody?.rows || []).filter(
+    (row) => !row.matches("[data-cheese-studio-row]"),
+  );
+}
+
+function hideStudioOriginalRows(tbody) {
+  const rows = getConnectedStudioOriginalRows(tbody);
+  rows.forEach(hideOriginalElement);
+}
+
+function showStudioOriginalRows(
+  tbody = document.getElementById("make_clip_panel")?.tBodies?.[0],
+) {
+  const rows = getConnectedStudioOriginalRows(tbody);
+  rows.forEach((row) => {
+    const clipUID = getStudioRowClipUID(row);
+    if (clipUID && studioMakeClipState.deletedClipUIDs.has(clipUID)) {
+      hideOriginalElement(row);
+      return;
+    }
+    showOriginalElement(row);
+  });
+}
+
+function hideDeletedStudioOriginalRows() {
+  const table = document.getElementById("make_clip_panel");
+  const tbody = table?.tBodies?.[0];
+  if (!tbody) return;
+  getConnectedStudioOriginalRows(tbody).forEach((row) => {
+    const clipUID = getStudioRowClipUID(row);
+    if (clipUID && studioMakeClipState.deletedClipUIDs.has(clipUID)) {
+      hideOriginalElement(row);
+    }
+  });
+}
+
+function getStudioRowClipUID(row) {
+  const href = row
+    ?.querySelector('a[href*="/clip/manage"][href*="clipUID="]')
+    ?.getAttribute("href");
+  if (!href) return "";
+  try {
+    const url = new URL(href, location.origin);
+    return String(url.searchParams.get("clipUID") || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function getConnectedStudioOriginalRows(tbody) {
+  const rememberedRows = studioMakeClipState.originalRows.filter(
+    (row) => row.isConnected && row.parentElement === tbody,
+  );
+  if (rememberedRows.length) return rememberedRows;
+  const rows = getStudioNativeRows(tbody);
+  studioMakeClipState.originalRows = rows;
+  return rows;
+}
+
+function mountStudioHeaderSort(table) {
+  const headers = Array.from(table?.tHead?.rows?.[0]?.cells || []);
+  const pairs = [
+    [headers[0], "title"],
+    [headers[1], "channel"],
+  ];
+  pairs.forEach(([header, field]) => {
+    if (!header || header.dataset.cheeseStudioSortable) return;
+    header.dataset.cheeseStudioSortable = "1";
+    header.dataset.studioSortField = field;
+    header.tabIndex = 0;
+    header.addEventListener("click", handleStudioHeaderSort);
+    header.addEventListener("keydown", handleStudioHeaderSortKeydown);
+  });
+  updateStudioHeaderSortState();
+}
+
+function handleStudioHeaderSort(event) {
+  const header = event.currentTarget;
+  const field = header?.dataset?.studioSortField;
+  if (!field) return;
+  if (studioMakeClipState.tableSortField === field) {
+    if (studioMakeClipState.tableSortDirection === "asc") {
+      studioMakeClipState.tableSortDirection = "desc";
+    } else {
+      studioMakeClipState.tableSortField = "";
+      studioMakeClipState.tableSortDirection = "asc";
+    }
+  } else {
+    studioMakeClipState.tableSortField = field;
+    studioMakeClipState.tableSortDirection = "asc";
+  }
+  updateStudioHeaderSortState();
+  renderOrActivateStudioMakeClipSearch();
+}
+
+function handleStudioHeaderSortKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  handleStudioHeaderSort(event);
+}
+
+function updateStudioHeaderSortState() {
+  const table = document.getElementById("make_clip_panel");
+  table?.querySelectorAll("[data-studio-sort-field]").forEach((header) => {
+    const isActive =
+      header.dataset.studioSortField === studioMakeClipState.tableSortField;
+    header.classList.add("cheese-search-studio-sortable");
+    header.dataset.sortDir = isActive
+      ? studioMakeClipState.tableSortDirection
+      : "";
+    header.setAttribute(
+      "aria-sort",
+      isActive
+        ? studioMakeClipState.tableSortDirection === "asc"
+          ? "ascending"
+          : "descending"
+        : "none",
+    );
+  });
+}
+
+function getStudioMakeClipManageUrl(clip) {
+  const clipUID = encodeURIComponent(String(clip?.clipUID || ""));
+  return `/${studioMakeClipState.channelId}/clip/manage?clipUID=${clipUID}`;
+}
+
+function getStudioMakeClipPublicUrl(clip) {
+  const clipUID = String(clip?.clipUID || "").trim();
+  if (!clipUID) return "";
+  return `https://chzzk.naver.com/clips/${encodeURIComponent(clipUID)}`;
+}
+
+function getStudioMakeClipIframeCode(clip) {
+  const clipUrl = getStudioMakeClipPublicUrl(clip);
+  if (!clipUrl) return "";
+  return `<iframe src="${clipUrl}" width="640" height="360" frameborder="0" allowfullscreen></iframe>`;
+}
+
+function getStudioMakeClipThumbnailUrl(clip) {
+  const thumbnailUrl = String(clip?.thumbnailImageUrl || "").trim();
+  if (!thumbnailUrl) return "";
+  try {
+    const url = new URL(thumbnailUrl);
+    if (!url.searchParams.has("type")) {
+      url.searchParams.set("type", "o500x280_blur");
+    }
+    return url.toString();
+  } catch {
+    return thumbnailUrl;
+  }
+}
+
 function formatSeconds(totalSeconds) {
   const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
   const hours = Math.floor(safeSeconds / 3600);
@@ -3693,6 +5269,24 @@ function formatSeconds(totalSeconds) {
 
 function init() {
   initCommentTimestampMarkers();
+
+  cleanupStudioMakeClipViewIfInactive();
+
+  const studioContext = getStudioMakeClipContext();
+  if (studioContext) {
+    if (state.initializedFor) {
+      restoreOriginalView();
+      document
+        .querySelector(".cheese-search-shell:not(.cheese-search-studio-shell)")
+        ?.remove();
+      document.querySelector(".cheese-search-result-header")?.remove();
+      document.querySelector(".cheese-search-results-list")?.remove();
+      state.initializedFor = "";
+      state.channelId = null;
+    }
+    scheduleStudioMakeClipInit(studioContext);
+    return;
+  }
 
   const context = getPageContext();
   if (!context?.channelId) {
@@ -3810,6 +5404,7 @@ async function tryResubscribeOngoingFetch() {
     contentType: getContentConfig().contentType,
     videoType: "",
     sortType: "LATEST",
+    sort: controls?.sort || "latest",
     filterType: getCurrentClipFilterType(),
     orderType: getClipOrderTypeFromSort(controls?.sort),
     requestId,
@@ -3870,6 +5465,14 @@ function isVisible(element) {
 
 function handleWindowScroll() {
   updateScrollTopButton();
+  if (
+    getStudioMakeClipContext() &&
+    studioMakeClipState.hasLoaded &&
+    !studioMakeClipState.loading &&
+    isNearBottom()
+  ) {
+    revealMoreStudioMakeClipResults();
+  }
   if (!state.hasLoaded || state.loading) return;
   if (!isNearBottom()) return;
   revealMoreResults();
@@ -3904,6 +5507,31 @@ function revealMoreResults() {
   updateResultHeader(header, filtered);
 }
 
+function revealMoreStudioMakeClipResults() {
+  const table = document.getElementById("make_clip_panel");
+  const tbody = table?.tBodies?.[0];
+  const summary = document.querySelector(".cheese-search-studio-summary");
+  if (!tbody || !summary) return;
+
+  const filtered = getFilteredStudioMakeClips();
+  const nextVisibleCount = Math.min(
+    filtered.length,
+    studioMakeClipState.visibleCount + RESULT_RENDER_STEP_COUNT,
+  );
+  if (nextVisibleCount <= studioMakeClipState.visibleCount) return;
+
+  const nextResults = filtered.slice(
+    studioMakeClipState.visibleCount,
+    nextVisibleCount,
+  );
+  studioMakeClipState.visibleCount = nextVisibleCount;
+  tbody.insertAdjacentHTML(
+    "beforeend",
+    nextResults.map(renderStudioMakeClipRow).join(""),
+  );
+  updateStudioMakeClipSummary(summary, filtered);
+}
+
 function createScrollTopIcon() {
   return `
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -3934,6 +5562,9 @@ function updateScrollTopButton() {
 }
 
 function scheduleInitFromMutations(mutations) {
+  if (cleanupStudioMakeClipViewIfInactive()) {
+    return;
+  }
   if (mutations?.length && mutations.every(isCheeseSearchOnlyMutation)) {
     return;
   }
@@ -3945,6 +5576,7 @@ function scheduleInitFromMutations(mutations) {
 }
 
 function isCheeseSearchOnlyMutation(mutation) {
+  if (isCheeseSearchOwnedNode(mutation.target)) return true;
   const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
   if (!nodes.length) return false;
   return nodes.every(isCheeseSearchOwnedNode);
@@ -3953,7 +5585,8 @@ function isCheeseSearchOnlyMutation(mutation) {
 function isCheeseSearchOwnedNode(node) {
   if (!node || node.nodeType !== Node.ELEMENT_NODE) return true;
   if (node.matches(CHEESE_SEARCH_MUTATION_IGNORE_SELECTOR)) return true;
-  return Boolean(node.querySelector(CHEESE_SEARCH_MUTATION_IGNORE_SELECTOR));
+  if (node.closest?.(CHEESE_SEARCH_MUTATION_IGNORE_SELECTOR)) return true;
+  return Boolean(node.querySelector?.(CHEESE_SEARCH_MUTATION_IGNORE_SELECTOR));
 }
 
 const observer = new MutationObserver(scheduleInitFromMutations);
@@ -3961,6 +5594,10 @@ observer.observe(document.documentElement, { childList: true, subtree: true });
 ensureScrollTopButton();
 window.addEventListener("scroll", debounce(handleWindowScroll, 120), {
   passive: true,
+});
+window.addEventListener("hashchange", () => {
+  cleanupStudioMakeClipViewIfInactive();
+  init();
 });
 window.addEventListener(
   "resize",
@@ -3970,6 +5607,8 @@ window.addEventListener(
 document.addEventListener("click", handleCategoryFilterClick);
 document.addEventListener("click", handleCategoryResetDocumentClick);
 document.addEventListener("click", handleCommentTimestampDocumentClick);
+document.addEventListener("click", handleStudioMoreCaptureClick, true);
+document.addEventListener("click", handleStudioDocumentClick);
 document.addEventListener("keydown", handleCommentTimestampKeydown);
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -4061,6 +5700,10 @@ async function finalizeClipProgressDone(progress, isSilent) {
     isClipSearch: true,
     controls,
   });
+  if (needsSortMetricRefreshForCurrentResults()) {
+    void loadVideos({ forceRefresh: false });
+    return;
+  }
   if (!isSilent) {
     state.resultSignature = "";
     renderResults();
@@ -4101,6 +5744,7 @@ async function handleProgressStall() {
         contentType: getContentConfig().contentType,
         videoType: "",
         sortType: "LATEST",
+        sort: controls?.sort || "latest",
         filterType: getCurrentClipFilterType(),
         orderType: getClipOrderTypeFromSort(controls?.sort),
         requestId: newRequestId,

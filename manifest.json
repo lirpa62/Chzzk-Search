@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "치즈 서치 - Chzzk Search",
   "short_name": "Chzzk Search",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "치지직 채널의 다시보기와 클립을 검색합니다.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -13,7 +13,9 @@
   "permissions": ["tabs", "storage", "scripting", "unlimitedStorage"],
   "host_permissions": [
     "https://chzzk.naver.com/*",
+    "https://studio.chzzk.naver.com/*",
     "https://api.chzzk.naver.com/*",
+    "https://creatorhub-api.naver.com/*",
     "https://apis.naver.com/*"
   ],
   "background": {
@@ -21,7 +23,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://chzzk.naver.com/*"],
+      "matches": [
+        "https://chzzk.naver.com/*",
+        "https://studio.chzzk.naver.com/*"
+      ],
       "js": ["src/searchQuery.js", "src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle"
@@ -48,7 +53,10 @@
         "searching-animation.svg",
         "loading.svg"
       ],
-      "matches": ["https://chzzk.naver.com/*"]
+      "matches": [
+        "https://chzzk.naver.com/*",
+        "https://studio.chzzk.naver.com/*"
+      ]
     }
   ]
 }

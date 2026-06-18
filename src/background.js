@@ -1,9 +1,14 @@
 const SERVICE_API_BASE = "https://api.chzzk.naver.com/service/v1";
 const API_BASE = `${SERVICE_API_BASE}/channels`;
+const MANAGE_API_BASE = "https://api.chzzk.naver.com/manage/v1";
+const CREATORHUB_API_BASE = "https://creatorhub-api.naver.com/api/v5.0";
 const COMMENT_API_BASE = "https://apis.naver.com/nng_main/nng_comment_api/v1";
+const CLIP_LIKE_API_BASE =
+  "https://apis.naver.com/clip-viewer-web/like/v1/services/CHZZK/contents";
 const CACHE_TTL_MS = 1 * 60 * 60 * 1000;
 const COMMENT_TIMESTAMP_CACHE_TTL_MS = 30 * 60 * 1000;
 const COMMENT_TIMESTAMP_CACHE_VERSION = 2;
+const SORT_METRIC_CACHE_TTL_MS = 30 * 60 * 1000;
 const PAGE_SIZE = 50;
 const CLIP_PAGE_SIZE = 50;
 const COMMENT_TIMESTAMP_PAGE_SIZE = 30;
@@ -12,10 +17,14 @@ const COMMENT_TIMESTAMP_CLUSTER_RANGE_SECONDS = 3;
 const SEARCH_CHANNEL_PAGE_SIZE = 33;
 const MAX_CONCURRENT_PAGE_REQUESTS = 3;
 const MAX_CONCURRENT_COLLECTION_TASKS = 2;
+const MAKE_CLIP_PAGE_SIZE = 50;
 const CHANNEL_SEARCH_COOLDOWN_MS = 900;
 const FETCH_RETRY_DELAYS_MS = [500, 1200, 2500];
 const CLIP_MISSING_CONFIRMATION_COUNT = 2;
 const CLIP_PAGE_THROTTLE_MS = 50;
+const SORT_METRIC_CONCURRENCY = 6;
+const CLIP_REACTION_TIMEOUT_MS = 3500;
+const CLIP_REACTION_FAILURE_LIMIT = 12;
 
 const CACHE_STORAGE_PREFIX = "cache:";
 const CHANNEL_SEARCH_STORAGE_PREFIX = "channelSearch:";
@@ -28,6 +37,7 @@ const channelSearchCache = new Map();
 const categoryInfoCache = new Map();
 const categoryInfoInFlight = new Map();
 const commentTimestampCache = new Map();
+const videoCommentCountCache = new Map();
 const collectionTaskQueue = [];
 let activeCollectionTaskCount = 0;
 let channelSearchQueue = Promise.resolve();
@@ -40,7 +50,12 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason !== "update") return;
 
   try {
-    const tabs = await chrome.tabs.query({ url: "https://chzzk.naver.com/*" });
+    const tabs = await chrome.tabs.query({
+      url: [
+        "https://chzzk.naver.com/*",
+        "https://studio.chzzk.naver.com/*",
+      ],
+    });
     const version = chrome.runtime.getManifest().version;
 
     await Promise.allSettled(
@@ -226,6 +241,10 @@ const CLIP_PERSIST_FIELDS = [
   "publishDateAt",
   "publishDate",
   "createdDate",
+  "commentCount",
+  "commentCountFetchedAt",
+  "likeCount",
+  "likeCountFetchedAt",
   "deletedAt",
   "missingCount",
 ];
@@ -240,6 +259,8 @@ const VIDEO_PERSIST_FIELDS = [
   "duration",
   "readCount",
   "viewCount",
+  "commentCount",
+  "commentCountFetchedAt",
   "livePv",
   "publishDateAt",
   "publishDate",
@@ -461,10 +482,12 @@ function clipCacheKey({ channelId, filterType = "ALL", orderType = "RECENT" }) {
 }
 
 function inFlightKey(request) {
+  const metricSort = getSortMetricType(request.sort);
+  const metricSuffix = metricSort ? `:${metricSort}` : "";
   if (request.contentType === "clips") {
-    return `${clipCacheKey(request)}:${request.forceRefresh ? "force" : "normal"}`;
+    return `${clipCacheKey(request)}${metricSuffix}:${request.forceRefresh ? "force" : "normal"}`;
   }
-  return `videos:${cacheKey(request)}:${request.forceRefresh ? "force" : "normal"}`;
+  return `videos:${cacheKey(request)}${metricSuffix}:${request.forceRefresh ? "force" : "normal"}`;
 }
 
 function normalizeError(error) {
@@ -614,6 +637,109 @@ async function fetchClipPageOnce({
   }
 
   return payload.content;
+}
+
+async function fetchMakeClipPage({
+  channelId,
+  page,
+  dateFilter = "ALL",
+  orderFilter = "LATEST",
+  signal,
+}) {
+  const url = new URL(
+    `${MANAGE_API_BASE}/channels/${encodeURIComponent(channelId)}/clips/make-clips`,
+  );
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("size", String(MAKE_CLIP_PAGE_SIZE));
+  url.searchParams.set("dateFilter", normalizeMakeClipDateFilter(dateFilter));
+  url.searchParams.set("orderFilter", normalizeMakeClipOrderFilter(orderFilter));
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    credentials: "include",
+    signal,
+    headers: {
+      accept: "application/json, text/plain, */*",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`CHZZK 내가 만든 클립 API 요청 실패: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  if (Number(payload?.code) !== 200 || !payload.content) {
+    throw new Error(
+      payload?.message || "CHZZK 내가 만든 클립 응답을 읽을 수 없습니다.",
+    );
+  }
+  return payload.content;
+}
+
+async function deleteMakeClip({ channelId, clipUID }) {
+  const normalizedChannelId = String(channelId || "").trim();
+  const normalizedClipUID = String(clipUID || "").trim();
+  if (!normalizedChannelId) throw new Error("채널 ID를 확인할 수 없습니다.");
+  if (!normalizedClipUID) throw new Error("클립 ID를 확인할 수 없습니다.");
+
+  const response = await fetch(
+    `${MANAGE_API_BASE}/channels/${encodeURIComponent(normalizedChannelId)}/clips/${encodeURIComponent(normalizedClipUID)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+      headers: {
+        accept: "application/json, text/plain, */*",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`CHZZK 클립 삭제 요청 실패: HTTP ${response.status}`);
+  }
+
+  const text = await response.text();
+  if (text) {
+    const payload = JSON.parse(text);
+    if (Number(payload?.code) !== 200) {
+      throw new Error(payload?.message || "CHZZK 클립 삭제 응답을 읽을 수 없습니다.");
+    }
+  }
+
+  return { channelId: normalizedChannelId, clipUID: normalizedClipUID };
+}
+
+async function fetchAllMakeClips(request) {
+  const channelId = String(request?.channelId || "").trim();
+  if (!channelId) throw new Error("채널 ID를 확인할 수 없습니다.");
+
+  const firstPage = await fetchMakeClipPage({
+    ...request,
+    channelId,
+    page: 0,
+  });
+  const totalPages = Math.max(1, Number(firstPage.totalPages || 1));
+  const firstData = Array.isArray(firstPage.data) ? firstPage.data : [];
+  const pageNumbers = Array.from(
+    { length: Math.max(0, totalPages - 1) },
+    (_, index) => index + 1,
+  );
+  const pages = await mapWithConcurrency(
+    pageNumbers,
+    MAX_CONCURRENT_PAGE_REQUESTS,
+    (page) => fetchMakeClipPage({ ...request, channelId, page }),
+  );
+  const clips = firstData.concat(
+    pages.flatMap((page) => (Array.isArray(page.data) ? page.data : [])),
+  );
+
+  return {
+    channelId,
+    contentType: "makeClips",
+    totalCount: Number(firstPage.totalCount || clips.length),
+    totalPages,
+    fetchedAt: Date.now(),
+    clips,
+  };
 }
 
 async function enrichClipsWithCategoryValues(clips, signal) {
@@ -785,6 +911,308 @@ async function fetchCommentPage(videoNo, offset) {
     throw new Error(payload?.message || "댓글 API 응답을 읽을 수 없습니다.");
   }
   return payload.content;
+}
+
+function getSortMetricType(sort) {
+  if (sort === "comments") return "comments";
+  if (sort === "likes") return "likes";
+  return "";
+}
+
+function hasOwnMetric(item, field) {
+  return Object.prototype.hasOwnProperty.call(item || {}, field);
+}
+
+function hasMetricForEveryItem(items, field) {
+  return (Array.isArray(items) ? items : []).every((item) =>
+    hasOwnMetric(item, field),
+  );
+}
+
+async function enrichVideosWithSortMetrics(videos, sort, signal) {
+  if (getSortMetricType(sort) !== "comments") return videos;
+  if (!Array.isArray(videos) || !videos.length) return [];
+
+  return mapWithConcurrency(videos, SORT_METRIC_CONCURRENCY, async (video) => {
+    throwIfAborted(signal);
+    if (hasOwnMetric(video, "commentCount") && video?.commentCountFetchedAt) {
+      return video;
+    }
+    const videoNo = String(video?.videoNo || "").trim();
+    if (!videoNo) {
+      return {
+        ...video,
+        commentCount: 0,
+        commentCountFetchedAt: Date.now(),
+      };
+    }
+    try {
+      const commentCount = await fetchVideoCommentCount(videoNo, signal);
+      return {
+        ...video,
+        commentCount,
+        commentCountFetchedAt: Date.now(),
+      };
+    } catch {
+      return {
+        ...video,
+        commentCount: 0,
+        commentCountFetchedAt: Date.now(),
+      };
+    }
+  });
+}
+
+async function fetchVideoCommentCount(videoNo, signal) {
+  const cacheKey = String(videoNo || "").trim();
+  const cached = videoCommentCountCache.get(cacheKey);
+  if (
+    cached &&
+    Date.now() - Number(cached.createdAt || 0) < SORT_METRIC_CACHE_TTL_MS
+  ) {
+    return Number(cached.value || 0);
+  }
+
+  const url = new URL(
+    `${COMMENT_API_BASE}/type/STREAMING_VIDEO/id/${encodeURIComponent(cacheKey)}/comments`,
+  );
+  url.searchParams.set("limit", "30");
+  url.searchParams.set("offset", "0");
+  url.searchParams.set("orderType", "POPULAR");
+  url.searchParams.set("pagingType", "PAGE");
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    credentials: "include",
+    signal,
+    headers: {
+      accept: "application/json, text/plain, */*",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`댓글 API 요청 실패: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  if (Number(payload?.code) !== 200 || !payload.content) {
+    throw new Error(payload?.message || "댓글 API 응답을 읽을 수 없습니다.");
+  }
+
+  const comments = payload.content.comments || {};
+  const count = Number(comments.totalCount ?? comments.commentCount ?? 0);
+  const value = Number.isFinite(count) ? count : 0;
+  videoCommentCountCache.set(cacheKey, { createdAt: Date.now(), value });
+  return value;
+}
+
+async function enrichClipsWithSortMetrics(clips, sort, signal) {
+  return enrichClipsWithSortMetricsAndReport(clips, sort, signal);
+}
+
+function createClipLikeFetchState() {
+  return { reactionFailureCount: 0, reactionDisabled: false };
+}
+
+async function enrichClipWithLikeCount(clip, signal, state) {
+  throwIfAborted(signal);
+  if (hasOwnMetric(clip, "likeCount") && clip?.likeCountFetchedAt) {
+    return clip;
+  }
+
+  const clipUID = String(clip?.clipUID || "").trim();
+  if (!clipUID || state.reactionDisabled) {
+    return { ...clip, likeCount: 0, likeCountFetchedAt: Date.now() };
+  }
+
+  try {
+    const likeCount = await fetchClipLikeCount(clip, signal);
+    return { ...clip, likeCount, likeCountFetchedAt: Date.now() };
+  } catch {
+    if (signal?.aborted) throw createAbortError();
+    state.reactionFailureCount += 1;
+    if (state.reactionFailureCount >= CLIP_REACTION_FAILURE_LIMIT) {
+      state.reactionDisabled = true;
+    }
+    return { ...clip, likeCount: 0, likeCountFetchedAt: Date.now() };
+  }
+}
+
+async function enrichClipsWithSortMetricsAndReport(
+  clips,
+  sort,
+  signal,
+  onMetricClip,
+) {
+  if (getSortMetricType(sort) !== "likes") return clips;
+  if (!Array.isArray(clips) || !clips.length) return [];
+
+  const state = createClipLikeFetchState();
+
+  return mapWithConcurrency(clips, SORT_METRIC_CONCURRENCY, async (clip) => {
+    const enrichedClip = await enrichClipWithLikeCount(clip, signal, state);
+    onMetricClip?.(enrichedClip);
+    return enrichedClip;
+  });
+}
+
+/**
+ * 페이지 수집과 좋아요 수 조회를 겹쳐 처리하기 위한 스트리밍 풀.
+ * 페이지가 도착하는 즉시 push로 클립을 넣으면, 전역 동시성 한도 내에서
+ * 좋아요 조회를 곧바로 시작한다. drain()으로 모든 조회 완료를 기다린다.
+ */
+function createClipLikePipeline(signal, onMetricClip) {
+  const state = createClipLikeFetchState();
+  const enrichedByUID = new Map();
+  const pending = new Set();
+  let activeCount = 0;
+  let pipelineError = null;
+  const waiters = [];
+
+  function releaseWaiters() {
+    while (waiters.length) waiters.shift()();
+  }
+
+  function run(clip) {
+    activeCount += 1;
+    const task = (async () => {
+      const enrichedClip = await enrichClipWithLikeCount(clip, signal, state);
+      const uid = String(enrichedClip?.clipUID || "").trim();
+      if (uid) enrichedByUID.set(uid, enrichedClip);
+      onMetricClip?.(enrichedClip);
+    })()
+      .catch((error) => {
+        pipelineError = pipelineError || error;
+      })
+      .finally(() => {
+        activeCount -= 1;
+        pending.delete(task);
+        releaseWaiters();
+      });
+    pending.add(task);
+  }
+
+  async function push(clips) {
+    if (!Array.isArray(clips)) return;
+    for (const clip of clips) {
+      if (pipelineError) return;
+      while (activeCount >= SORT_METRIC_CONCURRENCY && !pipelineError) {
+        await new Promise((resolve) => waiters.push(resolve));
+      }
+      if (pipelineError) return;
+      run(clip);
+    }
+  }
+
+  async function drain() {
+    while (pending.size) {
+      await Promise.race(pending);
+    }
+    if (pipelineError) throw pipelineError;
+  }
+
+  return { push, drain, enrichedByUID };
+}
+
+function applyLikePipelineResults(clips, enrichedByUID) {
+  if (!Array.isArray(clips)) return clips;
+  return clips.map((clip) => {
+    const uid = String(clip?.clipUID || "").trim();
+    const enriched = uid ? enrichedByUID.get(uid) : null;
+    return enriched || clip;
+  });
+}
+
+async function fetchClipLikeCount(clip, signal) {
+  const clipUID = String(clip?.clipUID || "").trim();
+  if (!clipUID) return 0;
+
+  // 좋아요 카운트만 주는 경량 엔드포인트. clipviewer/card는 VOD 매니페스트까지
+  // 통째로 내려줘 요청당 페이로드가 수 KB였으나, 이 API는 수백 바이트뿐이다.
+  const url = new URL(
+    `${CLIP_LIKE_API_BASE}/${encodeURIComponent(`clip_${clipUID}`)}`,
+  );
+  url.searchParams.set("reactionType", "like");
+  url.searchParams.set("categoryId", "clip");
+  url.searchParams.set("displayId", "VIEWER_SHORTFORM");
+
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {
+      method: "GET",
+      credentials: "include",
+      signal,
+      headers: {
+        accept: "application/json, text/plain, */*",
+      },
+    },
+    CLIP_REACTION_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    throw new Error(`클립 반응 API 요청 실패: HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  const count = extractClipLikeCount(payload);
+  return Number.isFinite(count) ? count : 0;
+}
+
+function extractClipLikeCount(payload) {
+  const visited = new Set();
+  const stack = [payload];
+  let inspected = 0;
+
+  while (stack.length && inspected < 500) {
+    const value = stack.pop();
+    if (!value || typeof value !== "object" || visited.has(value)) continue;
+    visited.add(value);
+    inspected += 1;
+
+    const reactions = value.reactions;
+    if (Array.isArray(reactions)) {
+      const likeReaction =
+        reactions.find((item) => item?.reactionType === "like") ??
+        reactions[0];
+      const reactionsCount = Number(
+        likeReaction?.count ?? likeReaction?.reactionCount,
+      );
+      if (Number.isFinite(reactionsCount)) return reactionsCount;
+    }
+
+    const reaction = value.reaction;
+    if (reaction && typeof reaction === "object") {
+      const reactionCount = Number(reaction.count ?? reaction.reactionCount);
+      if (Number.isFinite(reactionCount)) return reactionCount;
+    }
+
+    const directCount = Number(value.reactionCount ?? value.likeCount);
+    if (Number.isFinite(directCount)) return directCount;
+
+    Object.values(value).forEach((child) => {
+      if (child && typeof child === "object") stack.push(child);
+    });
+  }
+
+  return 0;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  const parentSignal = options.signal;
+  throwIfAborted(parentSignal);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  parentSignal?.addEventListener?.("abort", abort, { once: true });
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+    parentSignal?.removeEventListener?.("abort", abort);
+  }
 }
 
 function collectCommentEntries(items, sourceType = "comment") {
@@ -1059,6 +1487,33 @@ function removeProgressSubscriber(entry, requestId) {
   return true;
 }
 
+function mergeAccumulatedClips(entry, clips) {
+  if (!Array.isArray(clips) || !clips.length) return;
+  if (!entry.accumulatedClipIndexById) {
+    entry.accumulatedClipIndexById = new Map();
+  }
+  clips.forEach((clip) => {
+    const clipUID = String(clip?.clipUID || "").trim();
+    if (!clipUID) {
+      entry.accumulatedClips.push(clip);
+      return;
+    }
+    const existingIndex = entry.accumulatedClipIndexById.get(clipUID);
+    if (existingIndex === undefined) {
+      entry.accumulatedClipIndexById.set(
+        clipUID,
+        entry.accumulatedClips.length,
+      );
+      entry.accumulatedClips.push(clip);
+      return;
+    }
+    entry.accumulatedClips[existingIndex] = {
+      ...entry.accumulatedClips[existingIndex],
+      ...clip,
+    };
+  });
+}
+
 function subscribeToInFlightFetch(key, requestId, progressReporter) {
   const entry = inFlightFetches.get(key);
   if (!entry) return null;
@@ -1087,6 +1542,7 @@ function runFetchWithProgress(key, request, progressReporter) {
     progressReporters,
     requestSubscribers: new Map(),
     accumulatedClips: [],
+    accumulatedClipIndexById: new Map(),
     lastProgress: null,
     promise: null,
     channelId: request.channelId,
@@ -1104,7 +1560,7 @@ function runFetchWithProgress(key, request, progressReporter) {
       contentType: rawProgress.contentType || entry.contentType,
     };
     if (progress.contentType === "clips" && Array.isArray(progress.clips)) {
-      entry.accumulatedClips.push(...progress.clips);
+      mergeAccumulatedClips(entry, progress.clips);
     }
     entry.lastProgress = progress;
     progressReporters.forEach((reporter) => reporter(progress));
@@ -1200,7 +1656,7 @@ function cancelFetchSubscription(requestId) {
     if (!removeProgressSubscriber(entry, requestId)) continue;
     const aborted = entry.progressReporters.size === 0;
     if (aborted) {
-      console.warn(
+      console.debug(
         "[CheeseSearch] aborting fetch — last subscriber cancelled",
         requestId,
       );
@@ -1249,6 +1705,12 @@ async function fetchAllVideos(request, reportProgress = () => {}) {
       });
       firstPage = await fetchVideoPage({ ...request, page: 0 });
     } catch (error) {
+      const value = await ensureVideoSortMetricsForValue(
+        cached.value,
+        request,
+        cached.createdAt,
+        key,
+      );
       reportProgress({
         phase: "done",
         fetchedPages: Math.max(1, Number(cached.value.totalPages || 1)),
@@ -1259,7 +1721,7 @@ async function fetchAllVideos(request, reportProgress = () => {}) {
         pageSize: PAGE_SIZE,
         fromCache: true,
       });
-      return { ...cached.value, fromCache: true, freshnessCheckFailed: true };
+      return { ...value, fromCache: true, freshnessCheckFailed: true };
     }
 
     const firstData = Array.isArray(firstPage.data) ? firstPage.data : [];
@@ -1280,7 +1742,13 @@ async function fetchAllVideos(request, reportProgress = () => {}) {
         pageSize: PAGE_SIZE,
         fromCache: true,
       });
-      return { ...cached.value, fromCache: true, checkedFresh: true };
+      const value = await ensureVideoSortMetricsForValue(
+        cached.value,
+        request,
+        cached.createdAt,
+        key,
+      );
+      return { ...value, fromCache: true, checkedFresh: true };
     }
 
     return fetchAllVideos({ ...request, forceRefresh: true }, reportProgress);
@@ -1298,14 +1766,19 @@ async function fetchAllVideos(request, reportProgress = () => {}) {
   });
 
   if (totalPages <= 1) {
+    const videos = await enrichVideosWithSortMetrics(
+      firstData,
+      request.sort,
+      request.signal,
+    );
     const value = {
       channelId: request.channelId,
       videoType: request.videoType || "",
       sortType: request.sortType || "LATEST",
-      totalCount: Number(firstPage.totalCount || firstData.length),
+      totalCount: Number(firstPage.totalCount || videos.length),
       totalPages: Math.max(1, totalPages),
       fetchedAt: now,
-      videos: firstData,
+      videos,
     };
     await writeCache(key, { createdAt: now, value });
     reportProgress({
@@ -1339,8 +1812,12 @@ async function fetchAllVideos(request, reportProgress = () => {}) {
         return result;
       }),
   );
-  const videos = firstData.concat(
-    pages.flatMap((page) => (Array.isArray(page.data) ? page.data : [])),
+  const videos = await enrichVideosWithSortMetrics(
+    firstData.concat(
+      pages.flatMap((page) => (Array.isArray(page.data) ? page.data : [])),
+    ),
+    request.sort,
+    request.signal,
   );
 
   const value = {
@@ -1362,6 +1839,40 @@ async function fetchAllVideos(request, reportProgress = () => {}) {
     pageSize: PAGE_SIZE,
   });
   return { ...value, fromCache: false };
+}
+
+async function ensureVideoSortMetricsForValue(value, request, createdAt, key) {
+  if (getSortMetricType(request.sort) !== "comments") return value;
+  const videos = await enrichVideosWithSortMetrics(
+    Array.isArray(value?.videos) ? value.videos : [],
+    request.sort,
+    request.signal,
+  );
+  const nextValue = { ...value, videos };
+  await writeCache(key, { createdAt, value: nextValue });
+  return nextValue;
+}
+
+function createClipMetricProgressBatcher(reportProgress, getBaseProgress) {
+  const pendingClips = [];
+  const flush = () => {
+    if (!pendingClips.length) return;
+    const clips = pendingClips.splice(0);
+    reportProgress({
+      ...getBaseProgress(),
+      clips,
+    });
+  };
+  return {
+    push(clip) {
+      if (!clip) return;
+      pendingClips.push(clip);
+      if (pendingClips.length >= CLIP_PAGE_SIZE) {
+        flush();
+      }
+    },
+    flush,
+  };
 }
 
 async function fetchAllClips(request, reportProgress = () => {}) {
@@ -1388,20 +1899,52 @@ async function fetchAllClips(request, reportProgress = () => {}) {
     now - cached.createdAt < CACHE_TTL_MS &&
     !normalizedRequest.forceRefresh
   ) {
-    const activeClips = await enrichClipsWithCategoryValues(
+    const cachedTotalPages = Math.max(1, Number(cached.value.totalPages || 1));
+    const cachedActiveClips = await enrichClipsWithCategoryValues(
       getActiveClips(cached.value.clips),
       normalizedRequest.signal,
     );
+    const metricProgress = createClipMetricProgressBatcher(
+      reportProgress,
+      () => ({
+        phase: "fetching",
+        fetchedPages: cachedTotalPages,
+        totalPages: cachedTotalPages,
+        totalCount: cachedActiveClips.length,
+        pageSize: CLIP_PAGE_SIZE,
+        contentType: "clips",
+        fromCache: true,
+      }),
+    );
+    const activeClips = await enrichClipsWithSortMetricsAndReport(
+      cachedActiveClips,
+      normalizedRequest.sort,
+      normalizedRequest.signal,
+      metricProgress.push,
+    );
+    metricProgress.flush();
+    if (getSortMetricType(normalizedRequest.sort) === "likes") {
+      await writeCache(key, {
+        createdAt: cached.createdAt,
+        value: {
+          ...cached.value,
+          clips: activeClips,
+          allClips: mergeClipMetricsIntoAllClips(
+            cached.value.allClips || cached.value.clips,
+            activeClips,
+          ),
+        },
+      });
+    }
     const { allClips: _allClips, ...publicValue } = cached.value;
     reportProgress({
       phase: "done",
-      fetchedPages: Math.max(1, Number(cached.value.totalPages || 1)),
-      totalPages: Math.max(1, Number(cached.value.totalPages || 1)),
+      fetchedPages: cachedTotalPages,
+      totalPages: cachedTotalPages,
       totalCount: activeClips.length,
       pageSize: CLIP_PAGE_SIZE,
       contentType: "clips",
       fromCache: true,
-      clips: activeClips,
     });
     return {
       ...publicValue,
@@ -1416,6 +1959,40 @@ async function fetchAllClips(request, reportProgress = () => {}) {
   const requestedCursors = new Set();
   let cursor = { clipUID: "", readCount: "" };
   let fetchedPages = 0;
+
+  const wantsLikeMetric = getSortMetricType(normalizedRequest.sort) === "likes";
+  const streamingMetricProgress = wantsLikeMetric
+    ? createClipMetricProgressBatcher(reportProgress, () => ({
+        phase: "fetching",
+        fetchedPages: Math.max(1, fetchedPages),
+        totalPages: 0,
+        totalCount: remoteClips.length,
+        pageSize: CLIP_PAGE_SIZE,
+        contentType: "clips",
+      }))
+    : null;
+  // 페이지 수집과 좋아요 수 조회를 겹쳐 처리한다: 새 페이지가 도착하는 즉시
+  // 해당 클립들의 좋아요 조회를 시작하고, 루프 종료 후 drain으로 마무리한다.
+  const likePipeline = wantsLikeMetric
+    ? createClipLikePipeline(
+        normalizedRequest.signal,
+        streamingMetricProgress.push,
+      )
+    : null;
+
+  // 이전 캐시에 이미 좋아요 수가 있으면 재조회를 건너뛰도록 UID로 미리 묶어둔다.
+  const previousClips = Array.isArray(cached?.value?.allClips)
+    ? cached.value.allClips
+    : Array.isArray(cached?.value?.clips)
+      ? cached.value.clips
+      : [];
+  const previousClipsByUID = new Map();
+  if (wantsLikeMetric) {
+    previousClips.forEach((clip) => {
+      const uid = String(clip?.clipUID || "").trim();
+      if (uid) previousClipsByUID.set(uid, clip);
+    });
+  }
 
   while (true) {
     const cursorKey = `${cursor.clipUID || ""}:${cursor.readCount ?? ""}`;
@@ -1459,6 +2036,25 @@ async function fetchAllClips(request, reportProgress = () => {}) {
       clips: newPageClips,
     });
 
+    if (likePipeline) {
+      const clipsForLikes = newPageClips.map((clip) => {
+        const previous = previousClipsByUID.get(clip.clipUID);
+        if (
+          previous &&
+          hasOwnMetric(previous, "likeCount") &&
+          previous.likeCountFetchedAt
+        ) {
+          return {
+            ...clip,
+            likeCount: previous.likeCount,
+            likeCountFetchedAt: previous.likeCountFetchedAt,
+          };
+        }
+        return clip;
+      });
+      await likePipeline.push(clipsForLikes);
+    }
+
     const next = page?.page?.next;
     if (!next?.clipUID) break;
     cursor = {
@@ -1470,15 +2066,24 @@ async function fetchAllClips(request, reportProgress = () => {}) {
     }
   }
 
-  const previousClips = Array.isArray(cached?.value?.allClips)
-    ? cached.value.allClips
-    : Array.isArray(cached?.value?.clips)
-      ? cached.value.clips
-      : [];
-  const allClips = await enrichClipsWithCategoryValues(
+  const categorizedAll = await enrichClipsWithCategoryValues(
     reconcileClipCache(previousClips, remoteClips, now),
     normalizedRequest.signal,
   );
+
+  let allClips;
+  if (likePipeline) {
+    // 페이지 수집과 겹쳐 진행한 좋아요 조회를 마무리하고, 그 결과를
+    // 재조정된 전체 목록에 UID 기준으로 병합한다.
+    await likePipeline.drain();
+    streamingMetricProgress.flush();
+    allClips = applyLikePipelineResults(
+      categorizedAll,
+      likePipeline.enrichedByUID,
+    );
+  } else {
+    allClips = categorizedAll;
+  }
   const activeClips = getActiveClips(allClips);
   const deletedCount = allClips.length - activeClips.length;
   const value = {
@@ -1502,10 +2107,28 @@ async function fetchAllClips(request, reportProgress = () => {}) {
     totalCount: activeClips.length,
     pageSize: CLIP_PAGE_SIZE,
     contentType: "clips",
+    fetchedAt: value.fetchedAt,
   });
 
   const { allClips: _allClips, ...publicValue } = value;
   return { ...publicValue, fromCache: false };
+}
+
+function mergeClipMetricsIntoAllClips(allClips, enrichedClips) {
+  if (!Array.isArray(allClips) || !Array.isArray(enrichedClips)) {
+    return Array.isArray(allClips) ? allClips : [];
+  }
+  const enrichedById = new Map();
+  enrichedClips.forEach((clip) => {
+    const id = String(clip?.clipUID || "").trim();
+    if (id) enrichedById.set(id, clip);
+  });
+  return allClips.map((clip) => {
+    const id = String(clip?.clipUID || "").trim();
+    const enriched = id ? enrichedById.get(id) : null;
+    if (!enriched) return clip;
+    return { ...clip, ...enriched };
+  });
 }
 
 function reconcileClipCache(previousClips, remoteClips, now) {
@@ -1558,6 +2181,22 @@ function normalizeClipFilterType(value) {
 function normalizeClipOrderType(value) {
   const normalized = String(value || "RECENT").toUpperCase();
   return normalized === "POPULAR" ? "POPULAR" : "RECENT";
+}
+
+function normalizeMakeClipDateFilter(value) {
+  const normalized = String(value || "ALL").toUpperCase();
+  const allowed = new Set([
+    "ALL",
+    "WITHIN_ONE_DAY",
+    "WITHIN_SEVEN_DAYS",
+    "WITHIN_THIRTY_DAYS",
+  ]);
+  return allowed.has(normalized) ? normalized : "ALL";
+}
+
+function normalizeMakeClipOrderFilter(value) {
+  const normalized = String(value || "LATEST").toUpperCase();
+  return normalized === "POPULAR" ? "POPULAR" : "LATEST";
 }
 
 async function runCollectionTask(task, signal, reportQueued) {
@@ -1886,6 +2525,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "CHEESE_SEARCH_FETCH_MAKE_CLIPS") {
+    const abortController = new AbortController();
+    fetchAllMakeClips({
+      ...(message.payload || {}),
+      signal: abortController.signal,
+    })
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error) =>
+        sendResponse({ ok: false, error: normalizeError(error) }),
+      );
+    return true;
+  }
+
+  if (message.type === "CHEESE_SEARCH_DELETE_MAKE_CLIP") {
+    deleteMakeClip(message.payload || {})
+      .then((result) => sendResponse({ ok: true, result }))
+      .catch((error) =>
+        sendResponse({ ok: false, error: normalizeError(error) }),
+      );
+    return true;
+  }
+
   if (message.type === "CHEESE_SEARCH_FIND_CHANNEL") {
     fetchExactChannelByNicknameQueued(message.payload?.nickname)
       .then((result) => sendResponse({ ok: true, result }))
@@ -1954,6 +2615,7 @@ async function handleFetchClipsMessage(request, sender, sendResponse) {
         channelId: request.channelId,
         filterType: request.filterType,
         orderType: request.orderType,
+        sort: request.sort,
       });
       if (cachedResult) {
         sendResponse({ ok: true, result: cachedResult });
@@ -1997,10 +2659,22 @@ async function peekCacheValue(payload) {
     // fetch time and is persisted via CLIP_PERSIST_FIELDS, so we just read.
     const activeClips = getActiveClips(cached.value.clips);
     if (!activeClips.length) return null;
+    if (
+      getSortMetricType(payload.sort) === "likes" &&
+      !hasMetricForEveryItem(activeClips, "likeCount")
+    ) {
+      return null;
+    }
     const { allClips: _allClips, ...publicValue } = cached.value;
     return { ...publicValue, clips: activeClips, fromCache: true };
   }
   if (!Array.isArray(cached.value.videos) || !cached.value.videos.length) {
+    return null;
+  }
+  if (
+    getSortMetricType(payload.sort) === "comments" &&
+    !hasMetricForEveryItem(cached.value.videos, "commentCount")
+  ) {
     return null;
   }
   return { ...cached.value, fromCache: true };
