@@ -7,7 +7,7 @@ const CLIP_LIKE_API_BASE =
   "https://apis.naver.com/clip-viewer-web/like/v1/services/CHZZK/contents";
 const CACHE_TTL_MS = 1 * 60 * 60 * 1000;
 const COMMENT_TIMESTAMP_CACHE_TTL_MS = 30 * 60 * 1000;
-const COMMENT_TIMESTAMP_CACHE_VERSION = 2;
+const COMMENT_TIMESTAMP_CACHE_VERSION = 3;
 const SORT_METRIC_CACHE_TTL_MS = 30 * 60 * 1000;
 const PAGE_SIZE = 50;
 const CLIP_PAGE_SIZE = 50;
@@ -1417,6 +1417,8 @@ function extractTimestampDescriptionsFromLine(line) {
   const timestampMatches = Array.from(
     trimmedLine.matchAll(/(?:\d{1,2}:)?\d{1,2}:\d{2}/g),
   );
+  if (!timestampMatches.length) return [];
+
   if (timestampMatches.length > 1 && isTimestampListLine(trimmedLine)) {
     return timestampMatches.map((match) => ({
       seconds: parseTimestamp(match[0]),
@@ -1424,14 +1426,25 @@ function extractTimestampDescriptionsFromLine(line) {
     }));
   }
 
-  const match = trimmedLine.match(
-    /^(?:[-*•■▶▷\[\](){}<>〈〉《》「」『』【】（）［］｛｝\s]*)?((?:\d{1,2}:)?\d{1,2}:\d{2})(?:[\])}>\u3009\u300b\u300d\u300f\u3011\uff09\uff3d\uff5d])?(.*)$/u,
-  );
-  if (!match) return [];
+  return timestampMatches.map((match, index) => {
+    const timestamp = match[0];
+    const timestampIndex = Number(match.index || 0);
+    const nextTimestampIndex =
+      index + 1 < timestampMatches.length
+        ? Number(timestampMatches[index + 1].index || trimmedLine.length)
+        : trimmedLine.length;
+    const description = trimTimestampSegmentDescription(
+      trimmedLine,
+      timestampIndex,
+      timestamp.length,
+      nextTimestampIndex,
+    );
 
-  const seconds = parseTimestamp(match[1]);
-  const description = normalizeTimestampDescription(match[2]);
-  return [{ seconds, description }];
+    return {
+      seconds: parseTimestamp(timestamp),
+      description,
+    };
+  });
 }
 
 function isTimestampListLine(line) {
@@ -1439,6 +1452,42 @@ function isTimestampListLine(line) {
     .replace(/(?:\d{1,2}:)?\d{1,2}:\d{2}/g, "")
     .replace(/[\s,/|·ㆍ・‧•\-–—_()[\]{}]+/g, "")
     .trim();
+}
+
+function trimTimestampSegmentDescription(
+  line,
+  timestampIndex,
+  timestampLength,
+  nextTimestampIndex,
+) {
+  const prefix = line.slice(0, timestampIndex).trimEnd();
+  const opening = prefix[prefix.length - 1] || "";
+  const closingMap = {
+    "(": ")",
+    "[": "]",
+    "{": "}",
+    "<": ">",
+    "〈": "〉",
+    "《": "》",
+    "「": "」",
+    "『": "』",
+    "【": "】",
+    "（": "）",
+    "［": "］",
+    "｛": "｝",
+  };
+  const closing = closingMap[opening];
+  let description = line.slice(
+    timestampIndex + timestampLength,
+    nextTimestampIndex,
+  );
+  if (closing && description.trimEnd().endsWith(closing)) {
+    description = description.trimEnd().slice(0, -closing.length);
+  }
+  return description.replace(
+    /[\s\-–—_:|/.,~·▶▷([{<〈《「『【（［｛]+$/u,
+    "",
+  );
 }
 
 function normalizeTimestampDescription(description) {

@@ -1,0 +1,752 @@
+/* 치즈 서치 - 오디오 믹서 UI */
+
+/* 플레이어 하단 버튼 (native pzp 버튼 스타일을 상속받고, 활성 색만 지정) */
+.cheese-audio-mixer-button.is-active {
+  color: #00ffa3;
+}
+
+.cheese-audio-mixer-button .pzp-ui-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cheese-audio-mixer-button .pzp-ui-icon__svg {
+  display: block;
+  width: 36px;
+  height: 36px;
+}
+
+.cheese-audio-mixer-active-dot {
+  fill: #838285;
+  transition: fill 0.12s ease;
+}
+
+.cheese-audio-mixer-button.is-active .cheese-audio-mixer-active-dot {
+  fill: #00ffa3;
+}
+
+/* 팝업 패널 — 플레이어 내부에 absolute로 배치되어 스크롤과 무관하게 고정 */
+.cheese-audio-mixer-panel {
+  position: absolute;
+  right: 16px;
+  bottom: 64px;
+  z-index: 2147483646;
+  box-sizing: border-box;
+  width: min(360px, calc(100% - 24px));
+  max-height: min(520px, calc(100% - 90px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  background: rgb(24 30 44 / 97%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-family:
+    system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+  font-size: 13px;
+}
+
+.cheese-mixer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cheese-mixer-head strong {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+/* head의 "+ 프리셋 추가" 빠른 저장 버튼 */
+.cheese-mixer-quicksave-button {
+  flex: none;
+  padding: 5px 9px;
+  border: 1px solid rgba(0, 255, 163, 0.5);
+  border-radius: 999px;
+  background: rgba(0, 255, 163, 0.12);
+  color: #00ffa3;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.cheese-mixer-quicksave-button:hover {
+  border-color: #00ffa3;
+  background: rgba(0, 255, 163, 0.2);
+}
+
+/* head 인라인 이름 입력 영역 */
+/* "프리셋 추가" 모달: 패널 내부에 떠서 이름을 입력받는다. */
+.cheese-mixer-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: inherit;
+}
+
+.cheese-mixer-modal {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(0, 255, 163, 0.3);
+  border-radius: 12px;
+  background: rgb(28 34 48 / 99%);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+.cheese-mixer-modal strong {
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.cheese-mixer-modal input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid rgba(0, 255, 163, 0.4);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+}
+
+.cheese-mixer-modal input:focus {
+  outline: none;
+  border-color: #00ffa3;
+}
+
+.cheese-mixer-modal-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cheese-mixer-modal-actions .cheese-mixer-custom-button {
+  flex: 1;
+  padding: 9px 10px;
+}
+
+.cheese-mixer-power {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+}
+
+.cheese-mixer-power input,
+.cheese-mixer-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cheese-mixer-power i,
+.cheese-mixer-switch i {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  transition:
+    background 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.cheese-mixer-power i::after,
+.cheese-mixer-switch i::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  content: "";
+  transition: transform 0.14s ease;
+}
+
+.cheese-mixer-power input:checked + i,
+.cheese-mixer-switch input:checked + i {
+  background: rgba(0, 255, 163, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(0, 255, 163, 0.46);
+}
+
+.cheese-mixer-power input:checked + i::after,
+.cheese-mixer-switch input:checked + i::after {
+  transform: translateX(16px);
+  background: #00ffa3;
+}
+
+.cheese-mixer-close {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.cheese-mixer-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+/* 탭 */
+.cheese-mixer-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 0;
+}
+
+.cheese-mixer-tab {
+  flex: 1;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 7px 7px 0 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cheese-mixer-tab:hover {
+  color: #fff;
+}
+
+.cheese-mixer-tab.is-active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #00ffa3;
+}
+
+.cheese-mixer-body {
+  padding: 12px 14px 16px;
+  overflow-y: auto;
+  /* 타임스탬프 패널과 동일한 커스텀 스크롤바 */
+  scrollbar-color: rgba(37, 223, 151, 0.72) rgba(255, 255, 255, 0.08);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.cheese-mixer-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cheese-mixer-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  margin: 8px 0;
+}
+
+.cheese-mixer-body::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(37, 223, 151, 0.88),
+    rgba(22, 143, 92, 0.86)
+  );
+  border: 2px solid rgba(18, 20, 24, 0.96);
+  border-radius: 999px;
+}
+
+.cheese-mixer-body::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(37, 223, 151, 1),
+    rgba(22, 143, 92, 1)
+  );
+}
+
+.cheese-mixer-pane {
+  display: none;
+}
+
+.cheese-mixer-pane.is-active {
+  display: block;
+}
+
+.cheese-mixer-hint {
+  margin: 0 0 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+}
+
+/* 프리셋 */
+.cheese-mixer-presets {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.cheese-mixer-preset {
+  padding: 12px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.cheese-mixer-preset:hover {
+  border-color: rgba(0, 255, 163, 0.5);
+  background: rgba(0, 255, 163, 0.08);
+}
+
+.cheese-mixer-preset.is-active {
+  border-color: #00ffa3;
+  background: rgba(0, 255, 163, 0.16);
+  color: #00ffa3;
+}
+
+.cheese-mixer-custom-preset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cheese-mixer-custom-button {
+  min-width: 0;
+  padding: 9px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+.cheese-mixer-custom-button:hover:not(:disabled),
+.cheese-mixer-custom-button.is-active {
+  border-color: rgba(0, 255, 163, 0.58);
+  background: rgba(0, 255, 163, 0.12);
+  color: #00ffa3;
+}
+
+.cheese-mixer-custom-button.is-primary {
+  border-color: rgba(0, 255, 163, 0.5);
+  background: rgba(0, 255, 163, 0.14);
+  color: #00ffa3;
+}
+
+.cheese-mixer-custom-button.is-danger {
+  border-color: rgba(255, 73, 80, 0.45);
+  background: rgba(255, 73, 80, 0.1);
+  color: #ff6b70;
+}
+
+.cheese-mixer-custom-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.cheese-mixer-custom-head {
+  display: grid;
+  margin-bottom: 10px;
+}
+
+.cheese-mixer-custom-creator {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(94px, auto);
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid rgba(0, 255, 163, 0.26);
+  border-radius: 8px;
+  background: rgba(0, 255, 163, 0.06);
+}
+
+.cheese-mixer-custom-creator input {
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+}
+
+.cheese-mixer-mode-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.cheese-mixer-mode-option {
+  min-width: 0;
+  padding: 8px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cheese-mixer-mode-option.is-active {
+  border-color: rgba(0, 255, 163, 0.58);
+  background: rgba(0, 255, 163, 0.14);
+  color: #00ffa3;
+}
+
+.cheese-mixer-custom-dialog {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.cheese-mixer-custom-dialog strong {
+  font-size: 12px;
+}
+
+.cheese-mixer-custom-dialog p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+}
+
+.cheese-mixer-custom-dialog input {
+  min-width: 0;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+}
+
+.cheese-mixer-custom-dialog-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.cheese-mixer-custom-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.cheese-mixer-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 14px 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 12px;
+  text-align: center;
+}
+
+.cheese-mixer-custom-item {
+  min-width: 0;
+}
+
+.cheese-mixer-custom-select {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #fff;
+}
+
+.cheese-mixer-custom-apply {
+  min-width: 0;
+  padding: 9px 58px 9px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.cheese-mixer-custom-apply strong,
+.cheese-mixer-custom-apply span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cheese-mixer-custom-apply strong {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cheese-mixer-custom-apply span {
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+}
+
+.cheese-mixer-custom-select:hover,
+.cheese-mixer-custom-select.is-active {
+  border-color: rgba(0, 255, 163, 0.58);
+  background: rgba(0, 255, 163, 0.12);
+}
+
+.cheese-mixer-custom-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+.cheese-mixer-custom-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+}
+
+.cheese-mixer-custom-icon-button:hover {
+  border-color: rgba(0, 255, 163, 0.45);
+  color: #00ffa3;
+}
+
+.cheese-mixer-custom-icon-button.is-danger:hover {
+  border-color: rgba(255, 73, 80, 0.55);
+  color: #ff6b70;
+}
+
+.cheese-mixer-draft-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 8px;
+  border: 1px solid rgba(0, 255, 163, 0.32);
+  border-radius: 8px;
+  background: rgba(0, 255, 163, 0.08);
+}
+
+.cheese-mixer-draft-bar strong,
+.cheese-mixer-draft-bar span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cheese-mixer-draft-bar strong {
+  font-size: 12px;
+}
+
+.cheese-mixer-draft-bar span {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 11px;
+}
+
+/* 슬라이더 행 */
+.cheese-mixer-row {
+  display: grid;
+  grid-template-columns: 124px 1fr 44px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.cheese-mixer-row label,
+.cheese-mixer-row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+}
+
+.cheese-mixer-row output {
+  text-align: right;
+  color: rgba(255, 255, 255, 0.7);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+.cheese-mixer-row input[type="range"] {
+  width: 100%;
+  accent-color: #00ffa3;
+}
+
+.cheese-mixer-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.cheese-mixer-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cheese-mixer-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+/* info 아이콘 & 설명 팝오버 */
+.cheese-mixer-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  flex: none;
+  transition: color 0.12s ease;
+}
+
+.cheese-mixer-info:hover,
+.cheese-mixer-info[aria-expanded="true"] {
+  color: #00ffa3;
+}
+
+.cheese-mixer-info-popover {
+  position: fixed;
+  z-index: 20;
+  max-width: 240px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 255, 163, 0.35);
+  border-radius: 8px;
+  background: rgb(18 24 36 / 98%);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+/* 전문가 EQ */
+.cheese-mixer-eq {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  height: 156px;
+  margin-bottom: 16px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.cheese-mixer-eq-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cheese-mixer-eq-value {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(0, 255, 163, 0.92);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.cheese-mixer-eq-band input[type="range"] {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 16px;
+  height: 100px;
+  accent-color: #00ffa3;
+}
+
+.cheese-mixer-eq-band span {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 전문가 모드 그룹 소제목 */
+.cheese-mixer-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 16px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  color: #00ffa3;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+/* 그룹 제목의 info 아이콘은 제목 민트색과 구분되도록 약간 흐리게 */
+.cheese-mixer-group-heading .cheese-mixer-info {
+  color: rgba(0, 255, 163, 0.55);
+}
+
+.cheese-mixer-group-heading:first-child {
+  margin-top: 0;
+}
+
+.cheese-mixer-expert-group {
+  margin-bottom: 4px;
+}

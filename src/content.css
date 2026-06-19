@@ -1207,6 +1207,7 @@
 .cheese-search-results-list[data-cheese-search-active="1"]:not(
     [data-content-type="clips"]
   ) {
+  container-type: inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 30px 14px;
@@ -1243,11 +1244,32 @@
 
 .cheese-search-results-list:not([data-content-type="clips"])
   .cheese-search-card {
-  /* 네이티브 그리드와 동일하게 3열(gap 14px → 33.3333% - 9.33333px) */
+  /* 네이티브 그리드처럼 넓은 화면에서는 4열, 좁아지면 3열 이하로 전환한다. */
   flex: none;
-  width: calc(33.3333% - 9.33333px);
+  width: calc(25% - 10.5px);
   min-width: 0;
   list-style: none;
+}
+
+@container (max-width: 920px) {
+  .cheese-search-results-list:not([data-content-type="clips"])
+    .cheese-search-card {
+    width: calc(33.3333% - 9.33333px);
+  }
+}
+
+@container (max-width: 640px) {
+  .cheese-search-results-list:not([data-content-type="clips"])
+    .cheese-search-card {
+    width: calc(50% - 7px);
+  }
+}
+
+@container (max-width: 420px) {
+  .cheese-search-results-list:not([data-content-type="clips"])
+    .cheese-search-card {
+    width: 100%;
+  }
 }
 
 .cheese-search-results-list .video_card_container__urjO6 {
@@ -1410,6 +1432,7 @@
 }
 
 .cheese-search-results-list[data-content-type="clips"] {
+  container-type: inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
@@ -1420,11 +1443,29 @@
 }
 
 .cheese-search-results-list[data-content-type="clips"] .cheese-search-card {
-  /* 네이티브 그리드와 동일하게 3열(gap 14px → 33.3333% - 9.33333px) */
+  /* 네이티브 그리드처럼 넓은 화면에서는 4열, 좁아지면 3열 이하로 전환한다. */
   flex: none;
-  width: calc(33.3333% - 9.33333px);
+  width: calc(25% - 10.5px);
   min-width: 0;
   list-style: none;
+}
+
+@container (max-width: 920px) {
+  .cheese-search-results-list[data-content-type="clips"] .cheese-search-card {
+    width: calc(33.3333% - 9.33333px);
+  }
+}
+
+@container (max-width: 640px) {
+  .cheese-search-results-list[data-content-type="clips"] .cheese-search-card {
+    width: calc(50% - 7px);
+  }
+}
+
+@container (max-width: 420px) {
+  .cheese-search-results-list[data-content-type="clips"] .cheese-search-card {
+    width: 100%;
+  }
 }
 
 .cheese-search-results-list[data-content-type="clips"] .clip_card_link__Pxcf6 {
@@ -1854,9 +1895,14 @@
 }
 
 .cheese-search-comment-panel-list button:hover,
-.cheese-search-comment-panel-list button:focus-visible {
+.cheese-search-comment-panel-list button:focus-visible,
+.cheese-search-comment-panel-list button.is-current {
   background: rgba(37, 223, 151, 0.13);
   outline: 0;
+}
+
+.cheese-search-comment-panel-list button.is-current {
+  box-shadow: inset 0 0 0 1px rgba(37, 223, 151, 0.28);
 }
 
 .cheese-search-comment-panel-list button > span {

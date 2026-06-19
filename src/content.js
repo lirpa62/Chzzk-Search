@@ -115,7 +115,44 @@ const commentMarkerState = {
   previewTooltipTimer: 0,
   panelAnchorTimer: 0,
   panelAnchorCloseTimer: 0,
+  keepControlsObserver: null,
+  keepControlsRoot: null,
+  panelTimeUpdateVideo: null,
+  panelTimeUpdateHandler: null,
+  currentPanelMarkerSeconds: "",
 };
+
+// 치지직은 마우스 비활성 시 플레이어 루트(.pzp-pc)에서 `pzp-pc--controls`
+// 클래스를 제거해 하단 컨트롤을 숨긴다. 패널이 열린 동안 이 클래스를 강제로
+// 유지하면 native 표시 로직을 그대로 활용해 컨트롤이 사라지지 않게 한다.
+const PZP_CONTROLS_CLASS = "pzp-pc--controls";
+
+function keepCommentPanelControlsVisible(root) {
+  releaseCommentPanelControlsVisible();
+  if (!root) return;
+  commentMarkerState.keepControlsRoot = root;
+  if (!root.classList.contains(PZP_CONTROLS_CLASS)) {
+    root.classList.add(PZP_CONTROLS_CLASS);
+  }
+  commentMarkerState.keepControlsObserver = new MutationObserver(() => {
+    const r = commentMarkerState.keepControlsRoot;
+    if (r && !r.classList.contains(PZP_CONTROLS_CLASS)) {
+      r.classList.add(PZP_CONTROLS_CLASS);
+    }
+  });
+  commentMarkerState.keepControlsObserver.observe(root, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+}
+
+function releaseCommentPanelControlsVisible() {
+  if (commentMarkerState.keepControlsObserver) {
+    commentMarkerState.keepControlsObserver.disconnect();
+    commentMarkerState.keepControlsObserver = null;
+  }
+  commentMarkerState.keepControlsRoot = null;
+}
 
 const observerState = {
   initTimer: 0,
@@ -1598,7 +1635,9 @@ function findContentListByItemLinks(root) {
   if (!root) return null;
   const itemLinks = Array.from(root.querySelectorAll(getContentItemSelector()))
     .filter((element) => element.closest(".cheese-search-shell") == null)
-    .filter((element) => element.closest(".cheese-search-results-list") == null);
+    .filter(
+      (element) => element.closest(".cheese-search-results-list") == null,
+    );
   if (!itemLinks.length) return null;
 
   const candidates = new Map();
@@ -3012,7 +3051,9 @@ function harvestNativeCardClasses() {
   if (type !== "videos" || nativeCardClassCache[type]) return;
   const { panel } = getPanelElements();
   const nativeList = getNativeContentList(panel);
-  const item = nativeList?.querySelector(":scope > li:not(.cheese-search-card)");
+  const item = nativeList?.querySelector(
+    ":scope > li:not(.cheese-search-card)",
+  );
   if (!item) return;
   const harvested = harvestVideoCardClasses(item);
   if (harvested) nativeCardClassCache[type] = harvested;
@@ -3129,7 +3170,6 @@ function renderClipAdultArea() {
     </div>
   `;
 }
-
 
 function renderClipCategoryLink(clip) {
   const categoryLabel = getClipCategoryLabel(clip);
@@ -3595,8 +3635,12 @@ function openCommentTimestampPanel(anchor) {
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "댓글 타임스탬프");
   root.append(panel);
+  // 패널이 열린 동안 native 하단 컨트롤이 자동으로 숨겨지지 않도록 유지한다.
+  keepCommentPanelControlsVisible(root);
   renderCommentTimestampPanel(panel);
   positionCommentTimestampPanel(panel, root);
+  startCommentTimestampPanelTimeTracker();
+  updateCommentTimestampPanelCurrentMarker({ scroll: true });
   startCommentTimestampPanelAnchorMonitor();
   anchor?.setAttribute("aria-expanded", "true");
 }
@@ -3611,7 +3655,9 @@ function getCommentTimestampPanelRoot(anchor) {
 }
 
 function closeCommentTimestampPanel() {
+  stopCommentTimestampPanelTimeTracker();
   stopCommentTimestampPanelAnchorMonitor();
+  releaseCommentPanelControlsVisible();
   document.querySelector(`.${VIDEO_COMMENT_PANEL_CLASS}`)?.remove();
   document
     .querySelector(`.${VIDEO_COMMENT_BUTTON_CLASS}`)
@@ -3714,6 +3760,7 @@ function renderCommentTimestampPanel(
   panel.querySelectorAll("[data-comment-marker-seek]").forEach((button) => {
     button.addEventListener("click", handleCommentTimestampPanelSeek);
   });
+  updateCommentTimestampPanelCurrentMarker({ scroll: false });
 }
 
 function renderCommentTimestampPanelItem(marker) {
@@ -3735,6 +3782,73 @@ function handleCommentTimestampPanelSeek(event) {
   const seconds = Number(event.currentTarget.dataset.commentMarkerSeek || 0);
   seekVideoToCommentTimestamp(seconds);
   closeCommentTimestampPanel();
+}
+
+function startCommentTimestampPanelTimeTracker() {
+  stopCommentTimestampPanelTimeTracker();
+  const video = document.querySelector("video");
+  if (!video) return;
+  const handler = () => updateCommentTimestampPanelCurrentMarker();
+  commentMarkerState.panelTimeUpdateVideo = video;
+  commentMarkerState.panelTimeUpdateHandler = handler;
+  video.addEventListener("timeupdate", handler);
+  video.addEventListener("seeked", handler);
+}
+
+function stopCommentTimestampPanelTimeTracker() {
+  const video = commentMarkerState.panelTimeUpdateVideo;
+  const handler = commentMarkerState.panelTimeUpdateHandler;
+  if (video && handler) {
+    video.removeEventListener("timeupdate", handler);
+    video.removeEventListener("seeked", handler);
+  }
+  commentMarkerState.panelTimeUpdateVideo = null;
+  commentMarkerState.panelTimeUpdateHandler = null;
+  commentMarkerState.currentPanelMarkerSeconds = "";
+}
+
+function updateCommentTimestampPanelCurrentMarker({ scroll = false } = {}) {
+  const panel = document.querySelector(`.${VIDEO_COMMENT_PANEL_CLASS}`);
+  if (!panel) return;
+  const marker = findCurrentCommentTimestampMarker();
+  const markerSeconds = marker ? String(Number(marker.seconds)) : "";
+  const previousMarkerSeconds = commentMarkerState.currentPanelMarkerSeconds;
+  if (!scroll && markerSeconds === previousMarkerSeconds) {
+    return;
+  }
+  commentMarkerState.currentPanelMarkerSeconds = markerSeconds;
+  const shouldScroll =
+    Boolean(markerSeconds) && (scroll || markerSeconds !== previousMarkerSeconds);
+
+  panel.querySelectorAll("[data-comment-marker-seek]").forEach((button) => {
+    const isCurrent =
+      markerSeconds &&
+      Math.abs(Number(button.dataset.commentMarkerSeek) - Number(markerSeconds)) <
+        0.001;
+    button.classList.toggle("is-current", Boolean(isCurrent));
+    if (isCurrent) {
+      button.setAttribute("aria-current", "true");
+      if (shouldScroll) {
+        button.scrollIntoView({ block: "center", inline: "nearest" });
+      }
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
+}
+
+function findCurrentCommentTimestampMarker() {
+  const currentTime = Number(document.querySelector("video")?.currentTime);
+  if (!Number.isFinite(currentTime)) return null;
+  const markers = commentMarkerState.markers
+    .filter((marker) => Number.isFinite(Number(marker?.seconds)))
+    .sort((a, b) => Number(a.seconds) - Number(b.seconds));
+  let currentMarker = null;
+  for (const marker of markers) {
+    if (Number(marker.seconds) > currentTime) break;
+    currentMarker = marker;
+  }
+  return currentMarker;
 }
 
 function positionCommentTimestampPanel(panel, root) {
@@ -5495,10 +5609,7 @@ function ensureStudioOriginalEmptyRow(tbody) {
   if (!tbody) return;
   if (tbody.querySelector("[data-cheese-studio-empty-row]")) return;
   const table = tbody.closest("table");
-  const columnCount = Math.max(
-    1,
-    table?.tHead?.rows?.[0]?.cells?.length || 3,
-  );
+  const columnCount = Math.max(1, table?.tHead?.rows?.[0]?.cells?.length || 3);
   tbody.insertAdjacentHTML(
     "beforeend",
     `
@@ -6138,3 +6249,53 @@ async function handleProgressStall() {
 }
 
 init();
+
+// ── 오디오 믹서 설정 저장 브릿지 ─────────────────────────────────────────────
+// MAIN world의 src/audioMixer.js는 chrome.storage에 직접 접근할 수 없으므로,
+// window.postMessage로 받은 저장/복원 요청을 여기(격리 월드)에서 처리한다.
+// per-media 설정은 audioMixer:<mediaId>, 커스텀 프리셋은 모든 채널이 공유하도록
+// audioMixer:presets 전역 키에 따로 저장한다.
+const AUDIO_MIXER_STORAGE_PREFIX = "audioMixer:";
+const AUDIO_MIXER_PRESETS_KEY = "audioMixer:presets";
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window) return;
+  const data = event.data;
+  if (!data || data.source !== "cheese-audio-mixer") return;
+  const channelId = String(data.channelId || "").trim();
+  if (!channelId) return;
+  const key = `${AUDIO_MIXER_STORAGE_PREFIX}${channelId}`;
+
+  if (data.type === "save") {
+    try {
+      const incoming = data.state || {};
+      // customPresets는 전역으로, 나머지는 per-media로 분리 저장.
+      const { customPresets, ...perMedia } = incoming;
+      const toSet = { [key]: perMedia };
+      if (Array.isArray(customPresets)) {
+        toSet[AUDIO_MIXER_PRESETS_KEY] = customPresets;
+      }
+      chrome.storage.local.set(toSet);
+    } catch {}
+  } else if (data.type === "load") {
+    try {
+      chrome.storage.local.get([key, AUDIO_MIXER_PRESETS_KEY], (result) => {
+        const saved = result?.[key] || null;
+        const presets = result?.[AUDIO_MIXER_PRESETS_KEY] || [];
+        // per-media 설정에 전역 커스텀 프리셋을 합쳐서 반환.
+        const merged = saved
+          ? { ...saved, customPresets: presets }
+          : { customPresets: presets };
+        window.postMessage(
+          {
+            source: "cheese-audio-mixer-content",
+            type: "loaded",
+            channelId,
+            state: merged,
+          },
+          location.origin,
+        );
+      });
+    } catch {}
+  }
+});
