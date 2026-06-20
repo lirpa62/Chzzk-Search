@@ -870,3 +870,35 @@
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
+/* ── 라이브 싱크 따라잡기 버튼 ──────────────────────────────────────────── */
+.cheese-live-sync-button .pzp-ui-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cheese-live-sync-button .pzp-ui-icon__svg {
+  display: block;
+  width: 36px;
+  height: 36px;
+}
+
+/* 활성(지연 큼 / 따라잡는 중): 민트색 강조.
+   native pzp 버튼은 SVG fill을 자체 관리하므로 color 상속만으론 안 먹는다.
+   믹서 버튼처럼 SVG와 내부 path에 fill을 직접 지정한다. */
+.cheese-live-sync-button.is-active .pzp-ui-icon__svg,
+.cheese-live-sync-button.is-active .pzp-ui-icon__svg path {
+  color: #00ffa3;
+  fill: #00ffa3;
+}
+
+/* 비활성(지연 작음): 아이콘만 흐리게 + 클릭 불가 */
+.cheese-live-sync-button:disabled {
+  cursor: default;
+  pointer-events: none;
+}
+
+.cheese-live-sync-button:disabled .pzp-ui-icon__svg {
+  opacity: 0.35;
+}

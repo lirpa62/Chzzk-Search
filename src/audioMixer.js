@@ -15,6 +15,13 @@
   const STATS_PANEL_ID = "cheese-stream-stats-panel";
   const STATS_BUTTON_CLASS = "cheese-stream-stats-button";
   const STATS_REFRESH_MS = 1000;
+  // 라이브 싱크 따라잡기 관련
+  const SYNC_BUTTON_CLASS = "cheese-live-sync-button";
+  const SYNC_CHECK_MS = 1000; // 버튼 활성/비활성 갱신 주기
+  const SYNC_ENABLE_LATENCY_S = 3; // 이 지연(초) 이상이면 버튼 활성화
+  const SYNC_TARGET_LATENCY_S = 1.8; // 따라잡기 목표 지연(초)
+  const SYNC_RATE = 1.5; // 따라잡기 배속
+  const SYNC_MAX_DURATION_MS = 30000; // 안전: 최대 따라잡기 시간
   const PANEL_RIGHT_PX = 16;
   const PANEL_BOTTOM_PX = 64;
   const PANEL_TOP_GAP_PX = 12;
@@ -1087,7 +1094,7 @@
     root.appendChild(panel);
     ui = { panel, root };
     // 패널이 열린 동안 native 컨트롤이 자동으로 숨겨지지 않도록 유지한다.
-    keepControlsVisible(root);
+    keepControlsVisible(root, "mixer");
     bindPanelEvents(panel);
     positionPanel(panel, root);
     startPanelAnchorMonitor();
@@ -1098,7 +1105,7 @@
   function closePanel() {
     stopPanelAnchorMonitor();
     closeInfoPopover(ui?.panel);
-    releaseControlsVisible();
+    releaseControlsVisible("mixer");
     document.getElementById(PANEL_ID)?.remove();
     document
       .querySelector(`.${BUTTON_CLASS}`)
@@ -1112,26 +1119,34 @@
   const CONTROLS_CLASS = "pzp-pc--controls";
   let controlsObserver = null;
   let controlsRoot = null;
+  // 컨트롤 유지를 요청한 사유들(오디오 패널/스트림 패널/따라잡기 등). 하나라도
+  // 있으면 유지하고, 모두 비워지면 해제한다(서로의 유지를 끊지 않도록).
+  const controlsHolders = new Set();
 
-  function keepControlsVisible(root) {
-    releaseControlsVisible();
-    controlsRoot = root;
+  function keepControlsVisible(root, reason = "panel") {
+    controlsHolders.add(reason);
+    // 루트가 바뀌었거나 observer가 없으면 (재)설정.
+    if (controlsRoot !== root || !controlsObserver) {
+      if (controlsObserver) controlsObserver.disconnect();
+      controlsRoot = root;
+      controlsObserver = new MutationObserver(() => {
+        if (controlsRoot && !controlsRoot.classList.contains(CONTROLS_CLASS)) {
+          controlsRoot.classList.add(CONTROLS_CLASS);
+        }
+      });
+      controlsObserver.observe(root, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    }
     if (!root.classList.contains(CONTROLS_CLASS)) {
       root.classList.add(CONTROLS_CLASS);
     }
-    // native가 클래스를 다시 제거하면 즉시 복원한다.
-    controlsObserver = new MutationObserver(() => {
-      if (controlsRoot && !controlsRoot.classList.contains(CONTROLS_CLASS)) {
-        controlsRoot.classList.add(CONTROLS_CLASS);
-      }
-    });
-    controlsObserver.observe(root, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
   }
 
-  function releaseControlsVisible() {
+  function releaseControlsVisible(reason = "panel") {
+    controlsHolders.delete(reason);
+    if (controlsHolders.size > 0) return; // 아직 유지를 원하는 사유가 남음
     if (controlsObserver) {
       controlsObserver.disconnect();
       controlsObserver = null;
@@ -2027,7 +2042,7 @@
   // ══ 스트림 정보 (비디오/오디오 통계) ═══════════════════════════════════════
   // 재생바 우측 버튼 앞에 정보 아이콘을 두고, 클릭 시 해상도/FPS/비트레이트/코덱/
   // 레이턴시(라이브)와 오디오 정보를 보여준다. 값은 치지직 내부 플레이어 객체
-  // (React fiber의 _corePlayer)에서 얻는다(cheese-knife 검증 패턴).
+  // (React fiber의 _corePlayer)에서 얻는다.
   function getReactFiber(node) {
     if (!node) return null;
     const key = Object.keys(node).find((k) => k.startsWith("__reactFiber$"));
@@ -2058,6 +2073,17 @@
       fiber = fiber.return;
     }
     return null;
+  }
+
+  // 라이브 지연(초). _getLiveLatency()는 ms를 반환한다. core를 받으면 재사용.
+  function getLiveLatencySeconds(core = null) {
+    try {
+      const c = core || findCorePlayer();
+      const ms = c?.srcObject?._getLiveLatency?.();
+      return Number.isFinite(ms) ? ms / 1000 : null;
+    } catch {
+      return null;
+    }
   }
 
   // 코덱 문자열에서 사람이 읽기 쉬운 이름 추출(예: avc1.4d401f → H.264, mp4a.40.2 → AAC).
@@ -2188,7 +2214,8 @@
           // 해상도: width×height를 기본으로, 깨끗한 화질 등급(예: 1080p)을 병기.
           // label("1080pavc1.64002a")엔 코덱이 섞여 있으니 토큰만 추출하고,
           // 다시보기 ABR("Auto")처럼 등급을 못 얻으면 실제 height에서 도출한다.
-          const w = pickNum(selected, "width", "_width") || pickNum(ds, "videoWidth");
+          const w =
+            pickNum(selected, "width", "_width") || pickNum(ds, "videoWidth");
           const h =
             pickNum(selected, "height", "_height") ||
             pickNum(ds, "videoHeight") ||
@@ -2263,7 +2290,10 @@
           if (!info.audioChannels && ch) info.audioChannels = `${ch}ch`;
         }
 
-        if (info.isLive && typeof core.srcObject?._getLiveLatency === "function") {
+        if (
+          info.isLive &&
+          typeof core.srcObject?._getLiveLatency === "function"
+        ) {
           const lat = core.srcObject._getLiveLatency();
           if (Number.isFinite(lat))
             info.latency = `${numberFormat(Math.floor(lat))} ms`;
@@ -2367,7 +2397,7 @@
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-label", "스트림 정보");
     root.appendChild(panel);
-    keepControlsVisible(root);
+    keepControlsVisible(root, "stats");
     renderStatsPanel(panel);
     button?.setAttribute("aria-expanded", "true");
     statsTimer = window.setInterval(() => {
@@ -2385,8 +2415,7 @@
       window.clearInterval(statsTimer);
       statsTimer = 0;
     }
-    // 오디오 패널이 열려 있지 않을 때만 컨트롤 유지를 해제한다.
-    if (!ui?.panel) releaseControlsVisible();
+    releaseControlsVisible("stats");
     document.getElementById(STATS_PANEL_ID)?.remove();
     document
       .querySelector(`.${STATS_BUTTON_CLASS}`)
@@ -2443,6 +2472,191 @@
     }
   });
 
+  // ══ 라이브 싱크 따라잡기 ════════════════════════════════════════════════════
+  // 지연이 크면 버튼이 활성화되고, 클릭 시 2배속으로 라이브 엣지까지 따라잡은 뒤
+  // 1배속으로 복귀한다. 라이브에서만 동작한다.
+  let syncCheckTimer = 0;
+  let syncCatchUp = null; // { core, raf, startedAt, originalRate }
+
+  function syncIcon() {
+    // 빨리감기(▷▷) 아이콘
+    return `<svg class="pzp-ui-icon__svg" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+      <path d="M11 12.5v11l8-5.5-8-5.5Z" fill="currentColor"></path>
+      <path d="M19 12.5v11l8-5.5-8-5.5Z" fill="currentColor"></path>
+    </svg>`;
+  }
+
+  function createSyncButton() {
+    const btn = document.createElement("button");
+    btn.className = `${SYNC_BUTTON_CLASS} pzp-pc__setting-button pzp-button pzp-pc-ui-button`;
+    btn.type = "button";
+    btn.disabled = true;
+    btn.setAttribute("aria-label", "실시간 따라잡기");
+    btn.innerHTML = `<span class="pzp-button__tooltip pzp-button__tooltip--top">실시간 따라잡기</span><span class="pzp-ui-icon">${syncIcon()}</span>`;
+    return btn;
+  }
+
+  function ensureSyncButton() {
+    // 라이브에서만 표시한다.
+    if (!location.pathname.startsWith("/live/")) {
+      removeSyncButton();
+      return;
+    }
+    const player = findPlayer();
+    if (!player) return;
+    const controls = player.querySelector(".pzp-pc__bottom-buttons-right");
+    if (!controls || controls.querySelector(`.${SYNC_BUTTON_CLASS}`)) {
+      startSyncCheck();
+      return;
+    }
+    const btn = createSyncButton();
+    // 스트림 정보 버튼 앞(클립 만들기 앞쪽)에 둔다.
+    const anchor =
+      controls.querySelector(`.${STATS_BUTTON_CLASS}`) ||
+      controls.querySelector(".custom__clip-button") ||
+      controls.firstChild;
+    controls.insertBefore(btn, anchor);
+    startSyncCheck();
+  }
+
+  function removeSyncButton() {
+    stopSyncCheck();
+    document
+      .querySelectorAll(`.${SYNC_BUTTON_CLASS}`)
+      .forEach((b) => b.remove());
+  }
+
+  // 주기적으로 지연을 측정해 버튼 활성/비활성 + 툴팁 갱신.
+  function startSyncCheck() {
+    if (syncCheckTimer) return;
+    syncCheckTimer = window.setInterval(updateSyncButtonState, SYNC_CHECK_MS);
+    updateSyncButtonState();
+  }
+
+  function stopSyncCheck() {
+    if (syncCheckTimer) {
+      window.clearInterval(syncCheckTimer);
+      syncCheckTimer = 0;
+    }
+  }
+
+  // 버튼 툴팁 텍스트 갱신(지연 숫자 표시). 따라잡는 중엔 rAF 루프가 자주 호출해
+  // 호버 상태에서 숫자가 실시간으로 줄어드는 걸 볼 수 있다.
+  function setSyncTooltip(btn, lat, { catching = false } = {}) {
+    const tip = btn?.querySelector(".pzp-button__tooltip");
+    if (!tip) return;
+    if (catching) {
+      tip.textContent = Number.isFinite(lat)
+        ? `따라잡는 중… (지연 ${lat.toFixed(1)}초)`
+        : "따라잡는 중…";
+    } else {
+      tip.textContent = Number.isFinite(lat)
+        ? `실시간 따라잡기 (지연 ${lat.toFixed(1)}초)`
+        : "실시간 따라잡기";
+    }
+  }
+
+  function updateSyncButtonState() {
+    const btn = document.querySelector(`.${SYNC_BUTTON_CLASS}`);
+    if (!btn) return;
+    if (syncCatchUp) {
+      // 따라잡는 중엔 항상 활성(클릭 시 중단). 툴팁은 rAF 루프가 갱신한다.
+      btn.disabled = false;
+      btn.classList.add("is-active");
+      return;
+    }
+    const lat = getLiveLatencySeconds();
+    const enabled = Number.isFinite(lat) && lat >= SYNC_ENABLE_LATENCY_S;
+    // 활성화(클릭 가능)면 민트색, 비활성화면 흐리게(클릭 불가).
+    btn.disabled = !enabled;
+    btn.classList.toggle("is-active", enabled);
+    setSyncTooltip(btn, enabled ? lat : null);
+  }
+
+  function toggleSyncCatchUp() {
+    if (syncCatchUp) {
+      stopSyncCatchUp();
+    } else {
+      startSyncCatchUp();
+    }
+  }
+
+  // 배속 설정: video와 corePlayer 둘 다 시도(LLHLS는 corePlayer.playbackRate를
+  // 쓰는 경우가 있다). 적용된 배속을 반환.
+  function setPlaybackRate(core, video, rate) {
+    try {
+      if (video) video.playbackRate = rate;
+    } catch {}
+    try {
+      if (core && "playbackRate" in core) core.playbackRate = rate;
+    } catch {}
+    return video?.playbackRate ?? rate;
+  }
+
+  function startSyncCatchUp() {
+    const core = findCorePlayer();
+    const video = findVideo();
+    if (!core || !video) return;
+    const lat = getLiveLatencySeconds(core);
+    if (!Number.isFinite(lat) || lat < SYNC_ENABLE_LATENCY_S) return;
+
+    const originalRate = video.playbackRate || 1;
+    setPlaybackRate(core, video, SYNC_RATE);
+    if (video.playbackRate !== SYNC_RATE) return; // 배속 적용 실패
+    syncCatchUp = { core, originalRate, startedAt: Date.now(), video };
+    // 따라잡는 동안 재생바가 사라지지 않게 유지(지연 숫자 호버 확인 가능).
+    const player = findPlayer();
+    if (player) keepControlsVisible(player, "sync");
+    updateSyncButtonState();
+
+    const loop = () => {
+      if (!syncCatchUp) return;
+      const cur = getLiveLatencySeconds(syncCatchUp.core);
+      const elapsed = Date.now() - syncCatchUp.startedAt;
+      // 목표 지연 도달 / 측정 불가 / 안전 시간 초과 / 사용자가 속도 변경 시 종료.
+      if (
+        cur == null ||
+        cur <= SYNC_TARGET_LATENCY_S ||
+        elapsed > SYNC_MAX_DURATION_MS ||
+        syncCatchUp.video.playbackRate !== SYNC_RATE
+      ) {
+        stopSyncCatchUp();
+        return;
+      }
+      // 호버 중 실시간 지연을 보여줘 숫자가 줄어드는 게 보이게 한다.
+      const btn = document.querySelector(`.${SYNC_BUTTON_CLASS}`);
+      setSyncTooltip(btn, cur, { catching: true });
+      syncCatchUp.raf = requestAnimationFrame(loop);
+    };
+    syncCatchUp.raf = requestAnimationFrame(loop);
+  }
+
+  function stopSyncCatchUp() {
+    if (!syncCatchUp) return;
+    if (syncCatchUp.raf) cancelAnimationFrame(syncCatchUp.raf);
+    // 우리가 바꾼 2배속일 때만 원복(사용자가 그새 바꿨으면 건드리지 않음).
+    if (syncCatchUp.video.playbackRate === SYNC_RATE) {
+      setPlaybackRate(
+        syncCatchUp.core,
+        syncCatchUp.video,
+        syncCatchUp.originalRate || 1,
+      );
+    }
+    syncCatchUp = null;
+    releaseControlsVisible("sync"); // 따라잡기 끝 → 컨트롤 자동 숨김 복구
+    updateSyncButtonState();
+  }
+
+  // 따라잡기 버튼 클릭 위임.
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest?.(`.${SYNC_BUTTON_CLASS}`);
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (btn.disabled) return;
+    toggleSyncCatchUp();
+  });
+
   // ── 부트스트랩 ────────────────────────────────────────────────────────────
   function tick() {
     const pageKey = getPageKey();
@@ -2454,6 +2668,8 @@
         removeButton();
         closeStatsPanel();
         removeStatsButton();
+        stopSyncCatchUp();
+        removeSyncButton();
         clearGraphRetryBlock();
         currentPageKey = null;
         currentMediaId = null;
@@ -2468,6 +2684,7 @@
       customDraft = null;
       clearPresetDirty();
       teardownGraph();
+      stopSyncCatchUp(); // 미디어 전환 시 따라잡기 중단
       audio.source = null; // 미디어 전환 시 새 video
       audio.video = null;
       clearGraphRetryBlock();
@@ -2475,6 +2692,7 @@
     }
     ensureButton();
     ensureStatsButton();
+    ensureSyncButton();
     ensureEnabledGraph();
   }
 
