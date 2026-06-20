@@ -17,11 +17,14 @@
   const STATS_REFRESH_MS = 1000;
   // 라이브 싱크 따라잡기 관련
   const SYNC_BUTTON_CLASS = "cheese-live-sync-button";
+  const SYNC_MENU_ID = "cheese-live-sync-menu";
   const SYNC_CHECK_MS = 1000; // 버튼 활성/비활성 갱신 주기
-  const SYNC_ENABLE_LATENCY_S = 3; // 이 지연(초) 이상이면 버튼 활성화
+  const SYNC_ENABLE_LATENCY_S = 3; // 이 지연(초) 이상이면 버튼 활성화/자동 발동
   const SYNC_TARGET_LATENCY_S = 1.8; // 따라잡기 목표 지연(초)
   const SYNC_RATE = 1.5; // 따라잡기 배속
   const SYNC_MAX_DURATION_MS = 30000; // 안전: 최대 따라잡기 시간
+  const SYNC_AUTO_COOLDOWN_MS = 5000; // 자동 따라잡기 재발동 쿨다운
+  const SYNC_AUTO_STORE_KEY = "cheeseAudioMixer.autoSync"; // 전역 저장 키
   const PANEL_RIGHT_PX = 16;
   const PANEL_BOTTOM_PX = 64;
   const PANEL_TOP_GAP_PX = 12;
@@ -2169,6 +2172,49 @@
     }
   }
 
+  // 라디오 모드(오디오 전용) 오디오 비트레이트(kbps). selected가 ABR이라 비면,
+  // ① 실제 트랙들 중 audioBitrate 보유분 ② MPD 오디오 표현 순으로 찾는다.
+  function findMpdAudioBitrate(core) {
+    try {
+      // ① videoTracks(=오디오 전용이어도 트랙 목록은 여기에 있음)에서 실제 값.
+      const tracks = Array.from(core.videoTracks || []);
+      for (const t of tracks) {
+        const br =
+          pickNum(t, "audioBitrate", "_audioBitrate") ||
+          pickNum(t.dataset || {}, "audioBitRate");
+        const k = toKbps(br);
+        if (k) return k;
+      }
+      // ② MPD 오디오 AdaptationSet/Representation(@audioSamplingRate 또는 audio mime).
+      const mpd = (core._srcObject || core.srcObject)?._mpd;
+      if (mpd) {
+        const periods = Array.isArray(mpd.Period) ? mpd.Period : [mpd.Period];
+        for (const period of periods) {
+          if (!period) continue;
+          const asets = Array.isArray(period.AdaptationSet)
+            ? period.AdaptationSet
+            : [period.AdaptationSet];
+          for (const as of asets) {
+            if (!as) continue;
+            const list = Array.isArray(as.Representation)
+              ? as.Representation
+              : [as.Representation];
+            for (const r of list) {
+              if (!r) continue;
+              const isAudio =
+                r["@audioSamplingRate"] ||
+                /audio/i.test(r["@mimeType"] || as["@mimeType"] || "");
+              if (!isAudio || r["@width"]) continue; // 비디오 표현 제외
+              const k = toKbps(Number(r["@bandwidth"]));
+              if (k) return k;
+            }
+          }
+        }
+      }
+    } catch {}
+    return null;
+  }
+
   // 실제 height를 표준 화질 등급(예: 1080→"1080p")으로 매핑한다. 표준 등급에서
   // ±32px 이내면 그 등급으로 본다(인코딩 편차 흡수).
   function heightToGrade(h) {
@@ -2178,6 +2224,21 @@
       if (Math.abs(h - g) <= 32) return `${g}p`;
     }
     return `${h}p`;
+  }
+
+  // 출력 장치 샘플레이트(Hz). 믹서 AudioContext가 없을 때 폴백용. 임시 컨텍스트로
+  // 1회 읽고 닫은 뒤 캐싱한다(컨텍스트 남발 방지).
+  let cachedOutputSampleRate = 0;
+  function getOutputSampleRate() {
+    if (cachedOutputSampleRate) return cachedOutputSampleRate;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return 0;
+      const tmp = new Ctx();
+      cachedOutputSampleRate = tmp.sampleRate || 0;
+      tmp.close?.();
+    } catch {}
+    return cachedOutputSampleRate;
   }
 
   function collectStreamInfo() {
@@ -2193,6 +2254,7 @@
       audioChannels: null,
       audioSampleRate: null,
       isLive: location.pathname.startsWith("/live/"),
+      audioOnly: false, // 라디오 모드(오디오 전용)
     };
 
     // 1) <video> 표준 API 폴백
@@ -2281,13 +2343,32 @@
             info.audioCodec;
         }
 
-        // _currentCodecs 폴백 + 채널 보강
+        // _currentCodecs 폴백 + 채널 보강.
         const codecs = core._currentCodecs;
         if (codecs) {
           info.videoCodec = info.videoCodec || prettyCodec(codecs.video);
           info.audioCodec = info.audioCodec || prettyCodec(codecs.audio);
           const ch = pickNum(codecs, "audioChannel");
           if (!info.audioChannels && ch) info.audioChannels = `${ch}ch`;
+        }
+
+        // 라디오 모드(오디오 전용) 감지: 비디오 코덱이 없고 오디오만 있으며 실제
+        // 영상 크기도 없는 경우. 이때 비디오 정보는 의미가 없으니 비운다.
+        info.audioOnly =
+          !!codecs?.audio &&
+          !codecs?.video &&
+          !info.videoCodec &&
+          !(video?.videoWidth > 0);
+        if (info.audioOnly) {
+          info.resolution = null;
+          info.fps = null;
+          info.videoBitrate = null;
+          info.videoCodec = null;
+          // 오디오 비트레이트가 비면 MPD에서 오디오 표현을 찾아 보강.
+          if (!info.audioBitrate) {
+            const arep = findMpdAudioBitrate(core);
+            if (arep) info.audioBitrate = `${numberFormat(arep)} kbps`;
+          }
         }
 
         if (
@@ -2320,9 +2401,11 @@
       }
     } catch {}
 
-    // 3) 폴백 — 샘플속도: AudioContext, 채널: AudioContext 그래프
-    if (!info.audioSampleRate && audio.ctx?.sampleRate) {
-      info.audioSampleRate = `${(audio.ctx.sampleRate / 1000).toFixed(1)} kHz`;
+    // 3) 폴백 — 샘플속도: 믹서 AudioContext가 없으면(믹서 미사용) 출력 장치
+    // 샘플레이트를 가볍게 조회한다.
+    if (!info.audioSampleRate) {
+      const sr = audio.ctx?.sampleRate || getOutputSampleRate();
+      if (sr) info.audioSampleRate = `${(sr / 1000).toFixed(1)} kHz`;
     }
     try {
       if (!info.audioChannels && audio.source?.channelCount)
@@ -2428,18 +2511,22 @@
 
   function renderStatsPanel(panel) {
     const i = collectStreamInfo();
+    const videoSection = i.audioOnly
+      ? `<div class="cheese-stats-group-title">비디오</div>
+         <p class="cheese-stats-note">오디오 전용 (라디오 모드)</p>`
+      : `<div class="cheese-stats-group-title">비디오</div>
+         ${statsRow("해상도", i.resolution)}
+         ${statsRow("FPS", i.fps)}
+         ${statsRow("비트레이트", i.videoBitrate)}
+         ${statsRow("코덱", i.videoCodec)}`;
     panel.innerHTML = `
       <div class="cheese-stats-head">
         <strong>스트림 정보</strong>
         <button type="button" class="cheese-mixer-close" data-stats-close aria-label="닫기">✕</button>
       </div>
       <div class="cheese-stats-body">
-        <div class="cheese-stats-group-title">비디오</div>
-        ${statsRow("해상도", i.resolution)}
-        ${statsRow("FPS", i.fps)}
-        ${statsRow("비트레이트", i.videoBitrate)}
-        ${statsRow("코덱", i.videoCodec)}
-        ${i.isLive ? statsRow("레이턴시", i.latency) : ""}
+        ${i.isLive ? `<div class="cheese-stats-group-title">라이브</div>${statsRow("레이턴시", i.latency)}` : ""}
+        ${videoSection}
         <div class="cheese-stats-group-title">오디오</div>
         ${statsRow("비트레이트", i.audioBitrate)}
         ${statsRow("코덱", i.audioCodec)}
@@ -2477,6 +2564,26 @@
   // 1배속으로 복귀한다. 라이브에서만 동작한다.
   let syncCheckTimer = 0;
   let syncCatchUp = null; // { core, raf, startedAt, originalRate }
+  // 자동 따라잡기: 전역 설정(localStorage, 모든 채널 공유). 직접 켠 게 아니므로
+  // MAIN world에서 페이지 origin localStorage를 그대로 쓴다.
+  let autoSyncEnabled = loadAutoSync();
+  let lastAutoCatchUpAt = 0; // 자동 발동 쿨다운용
+
+  function loadAutoSync() {
+    try {
+      return window.localStorage.getItem(SYNC_AUTO_STORE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function setAutoSync(enabled) {
+    autoSyncEnabled = Boolean(enabled);
+    try {
+      window.localStorage.setItem(SYNC_AUTO_STORE_KEY, enabled ? "1" : "0");
+    } catch {}
+    updateSyncButtonState();
+  }
 
   function syncIcon() {
     // 빨리감기(▷▷) 아이콘
@@ -2521,6 +2628,7 @@
 
   function removeSyncButton() {
     stopSyncCheck();
+    closeSyncMenu();
     document
       .querySelectorAll(`.${SYNC_BUTTON_CLASS}`)
       .forEach((b) => b.remove());
@@ -2559,6 +2667,8 @@
   function updateSyncButtonState() {
     const btn = document.querySelector(`.${SYNC_BUTTON_CLASS}`);
     if (!btn) return;
+    // 자동 모드 표시(우클릭 메뉴로 토글). 자동이면 버튼에 표식을 둔다.
+    btn.classList.toggle("is-auto", autoSyncEnabled);
     if (syncCatchUp) {
       // 따라잡는 중엔 항상 활성(클릭 시 중단). 툴팁은 rAF 루프가 갱신한다.
       btn.disabled = false;
@@ -2566,11 +2676,29 @@
       return;
     }
     const lat = getLiveLatencySeconds();
-    const enabled = Number.isFinite(lat) && lat >= SYNC_ENABLE_LATENCY_S;
-    // 활성화(클릭 가능)면 민트색, 비활성화면 흐리게(클릭 불가).
-    btn.disabled = !enabled;
-    btn.classList.toggle("is-active", enabled);
-    setSyncTooltip(btn, enabled ? lat : null);
+    const overThreshold = Number.isFinite(lat) && lat >= SYNC_ENABLE_LATENCY_S;
+
+    // 자동 따라잡기: 임계 초과 + 쿨다운 경과 + 안전조건이면 발동.
+    if (autoSyncEnabled && overThreshold && canAutoCatchUp()) {
+      lastAutoCatchUpAt = Date.now();
+      startSyncCatchUp();
+      return;
+    }
+
+    // 수동: 활성화(클릭 가능)면 민트색, 비활성화면 흐리게(클릭 불가).
+    btn.disabled = !overThreshold;
+    btn.classList.toggle("is-active", overThreshold);
+    setSyncTooltip(btn, overThreshold ? lat : null);
+  }
+
+  // 자동 따라잡기 발동 가능 조건: 쿨다운 경과 + 영상이 재생 중(일시정지/되감기
+  // 중이 아님). 사용자가 의도적으로 멈추거나 되감을 땐 자동으로 끌어당기지 않는다.
+  function canAutoCatchUp() {
+    if (Date.now() - lastAutoCatchUpAt < SYNC_AUTO_COOLDOWN_MS) return false;
+    const video = findVideo();
+    if (!video) return false;
+    if (video.paused || video.seeking) return false;
+    return true;
   }
 
   function toggleSyncCatchUp() {
@@ -2649,6 +2777,22 @@
 
   // 따라잡기 버튼 클릭 위임.
   document.addEventListener("click", (e) => {
+    // 메뉴 항목 클릭(자동 토글)
+    const menuItem = e.target.closest?.(`#${SYNC_MENU_ID} [data-sync-auto]`);
+    if (menuItem) {
+      e.preventDefault();
+      e.stopPropagation();
+      setAutoSync(!autoSyncEnabled);
+      closeSyncMenu();
+      return;
+    }
+    // 메뉴 바깥 클릭 → 닫기
+    if (
+      document.getElementById(SYNC_MENU_ID) &&
+      !e.target.closest?.(`#${SYNC_MENU_ID}`)
+    ) {
+      closeSyncMenu();
+    }
     const btn = e.target.closest?.(`.${SYNC_BUTTON_CLASS}`);
     if (!btn) return;
     e.preventDefault();
@@ -2656,6 +2800,59 @@
     if (btn.disabled) return;
     toggleSyncCatchUp();
   });
+
+  // 우클릭 → 자동 따라잡기 토글 메뉴
+  // capture 단계 + stopImmediatePropagation으로 native 플레이어 컨텍스트 메뉴가
+  // 함께 뜨는 것을 막는다(native 리스너에 도달하기 전에 차단).
+  document.addEventListener(
+    "contextmenu",
+    (e) => {
+      const btn = e.target.closest?.(`.${SYNC_BUTTON_CLASS}`);
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      openSyncMenu(btn);
+    },
+    true,
+  );
+
+  function openSyncMenu(btn) {
+    closeSyncMenu();
+    const root = getPanelRoot(btn) || findPlayer();
+    if (!root) return;
+    if (getComputedStyle(root).position === "static") {
+      root.style.position = "relative";
+    }
+    const menu = document.createElement("div");
+    menu.id = SYNC_MENU_ID;
+    menu.className = "cheese-sync-menu";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `
+      <button type="button" class="cheese-sync-menu-item" data-sync-auto role="menuitemcheckbox" aria-checked="${autoSyncEnabled}">
+        <span class="cheese-sync-menu-check" aria-hidden="true">${autoSyncEnabled ? "✓" : ""}</span>
+        <span>자동 따라잡기</span>
+      </button>
+      <p class="cheese-sync-menu-hint">지연이 ${SYNC_ENABLE_LATENCY_S}초를 넘으면 자동으로 따라잡습니다.</p>`;
+    root.appendChild(menu);
+    // 버튼 위쪽에 배치(재생바 위로 뜨도록). 아이콘 오른쪽 끝 기준에서 조금 더
+    // 오른쪽(-12px)·살짝 더 위(+14px)로.
+    const rootRect = root.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    menu.style.bottom = `${rootRect.bottom - btnRect.top + 14}px`;
+    let right = rootRect.right - btnRect.right - 100;
+    right = Math.max(
+      8,
+      Math.min(right, root.clientWidth - menu.offsetWidth - 8),
+    );
+    menu.style.right = `${right}px`;
+    keepControlsVisible(root, "sync-menu");
+  }
+
+  function closeSyncMenu() {
+    document.getElementById(SYNC_MENU_ID)?.remove();
+    releaseControlsVisible("sync-menu");
+  }
 
   // ── 부트스트랩 ────────────────────────────────────────────────────────────
   function tick() {
