@@ -64,9 +64,11 @@ const seekPreviewState = {
 // (audioMixer/videoFilter/clipButtonHide)에는 postMessage로 전달한다.
 const FEATURE_HIDDEN_KEY = "cheeseFeatureHidden";
 const FEATURE_FLAGS_MESSAGE = "cheese-feature-flags";
-// 실시간 따라잡기 민감도 프리셋(low/normal/high). audioMixer(MAIN world)에 함께 전달.
+// 실시간 따라잡기 민감도 프리셋(low/normal/high/custom). audioMixer(MAIN world)에 전달.
 const SYNC_PRESET_KEY = "cheeseSyncPreset";
+const SYNC_CUSTOM_KEY = "cheeseSyncCustom"; // {enable,target} (preset=custom일 때)
 let syncPresetValue = "normal";
+let syncCustomValue = null; // {enable, target} 또는 null
 const featureFlags = {
   audioMixer: false,
   videoFilter: false,
@@ -76,10 +78,84 @@ const featureFlags = {
   searchVideos: false,
   searchClips: false,
   sidebar: false,
+  headerStudio: false, // 헤더의 '스튜디오' 버튼 숨김
   seekPreviewRealtime: false, // 다시보기 seek preview 실제 시각 병기 숨김
+  // 사이드바 메뉴 항목별 숨김(첫 nav 섹션의 개별 메뉴)
+  sbLives: false, // 전체 방송
+  sbClips: false, // 인기 클립
+  sbCategory: false, // 카테고리
+  sbSchedule: false, // 편성표
+  sbFollowing: false, // 팔로잉
+  sbCheezefarm: false, // 치즈팜
+  // 사이드바 섹션별 숨김(제목 섹션 통째로)
+  sbFollow: false, // 팔로우
+  sbPopularCategory: false, // 인기 카테고리
+  sbBroadcastSchedule: false, // 방송 일정
+  sbPartner: false, // 파트너
+  sbServices: false, // 서비스 바로가기(게임/e스포츠/오리지널/PC게임/라운지)
+  sbFollowOffline: false, // 팔로잉 섹션의 오프라인 채널 숨김
 };
 // 사이드바(aside#sidebar) 숨김용 CSS를 토글하는 <style> id.
 const SIDEBAR_HIDE_STYLE_ID = "cheese-sidebar-hide-style";
+
+// ── 헤더 미니 네비(사이드바 숨김 시 헤더에 SVG 아이콘 메뉴 주입) ──────────────
+// 사이드바를 숨기면 전체 방송/인기 클립/카테고리/편성표/팔로잉/치즈팜로 가는 길이
+// 사라진다 → 헤더 스튜디오 버튼 앞에 아이콘만 있는 미니 네비를 넣어 이동 가능하게.
+// 표시 여부는 settings에서 항목별 토글(전역 저장). chrome.storage 키:
+//   cheeseHeaderNav = { hdrLives, hdrClips, hdrCategory, hdrSchedule, hdrFollowing, hdrCheezefarm }
+// (각 true=표시). 미설정 시 기본 표시 항목은 HEADER_NAV_DEFAULT_SHOWN.
+const HEADER_NAV_KEY = "cheeseHeaderNav";
+const HEADER_NAV_CONTAINER_ID = "cheese-header-nav";
+// 미설정 시 기본 표시(전체 방송/인기 클립/카테고리/팔로잉). 편성표·치즈팜은 기본 off.
+const HEADER_NAV_DEFAULT_SHOWN = new Set([
+  "hdrLives",
+  "hdrClips",
+  "hdrCategory",
+  "hdrFollowing",
+]);
+// 각 항목: key(저장/식별) · href(이동) · label(aria/title) · svg(인라인, 클래스 해시 무관).
+const HEADER_NAV_ITEMS = [
+  {
+    key: "hdrLives",
+    href: "/lives",
+    label: "전체 방송",
+    svg: '<path d="M12.6355 11.5509C12.9372 11.7251 12.9372 12.1606 12.6355 12.3347L8.90216 14.4901C8.60048 14.6642 8.22339 14.4465 8.22339 14.0982V9.78748C8.22339 9.43914 8.60048 9.22142 8.90216 9.39559L12.6355 11.5509Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M2 8.21023C2 5.71105 4.026 3.68506 6.52519 3.68506H13.3134C15.5104 3.68506 17.3417 5.25072 17.7524 7.32717L20.885 6.31147C21.1438 6.22757 21.427 6.27257 21.647 6.43252C21.867 6.59246 21.9972 6.84803 21.9972 7.12003V16.9334C21.9972 17.2054 21.867 17.461 21.647 17.6209C21.427 17.7809 21.1438 17.8259 20.885 17.742L17.7422 16.7229C17.312 18.7743 15.4925 20.3146 13.3134 20.3146H6.52519C4.026 20.3146 2 18.2887 2 15.7895V8.21023ZM6.52519 5.38506H13.3134C14.8737 5.38506 16.1385 6.64993 16.1385 8.21023V15.7895C16.1385 17.3498 14.8737 18.6146 13.3134 18.6146H6.52519C4.96488 18.6146 3.70001 17.3498 3.70001 15.7895V8.21023C3.70001 6.64993 4.96488 5.38506 6.52519 5.38506ZM17.87 14.9773V9.07618L20.2972 8.28919V15.7642L17.87 14.9773Z" fill="currentColor"></path>',
+  },
+  {
+    key: "hdrClips",
+    href: "/clips",
+    label: "인기 클립",
+    svg: '<path fill-rule="evenodd" clip-rule="evenodd" d="M18.7019 10.4388C20.3302 9.56907 21.0119 7.567 20.2223 5.87372C19.4054 4.12183 17.3229 3.36389 15.5711 4.18081C13.8192 4.99773 13.0612 7.08016 13.8782 8.83205C14.1565 9.42892 14.5817 9.91041 15.0907 10.2536L13.3554 11.0628L4.65669 7.00648C4.23123 6.80808 3.7255 6.99215 3.52711 7.41761C3.32871 7.84307 3.51278 8.34881 3.93824 8.5472L11.3441 12.0006L3.93824 15.4541C3.51278 15.6525 3.32871 16.1582 3.52711 16.5837C3.7255 17.0091 4.23123 17.1932 4.65669 16.9948L13.3554 12.9385L15.0919 13.7482C14.5832 14.0914 14.1583 14.5727 13.8801 15.1692C13.0632 16.9211 13.8211 19.0035 15.573 19.8205C17.3249 20.6374 19.4073 19.8794 20.2242 18.1275C21.0141 16.4337 20.3317 14.4309 18.7022 13.5617L18.5494 13.4848C18.5434 13.4819 18.5374 13.4791 18.5313 13.4763C18.5253 13.4735 18.5193 13.4707 18.5132 13.4679L15.3666 12.0006L18.7019 10.4388ZM18.6816 6.59218C19.1017 7.49315 18.7119 8.56411 17.8109 8.98424C16.91 9.40436 15.839 9.01457 15.4189 8.1136C14.9988 7.21262 15.3886 6.14166 16.2895 5.72153C17.1905 5.30141 18.2614 5.6912 18.6816 6.59218ZM17.7999 15.011L17.8258 15.0231C18.7176 15.4474 19.1016 16.5124 18.6835 17.4091C18.2634 18.3101 17.1924 18.6999 16.2915 18.2797C15.3905 17.8596 15.0007 16.7886 15.4208 15.8877C15.839 14.991 16.9017 14.6007 17.7999 15.011Z" fill="currentColor"></path>',
+  },
+  {
+    key: "hdrCategory",
+    href: "/category",
+    label: "카테고리",
+    svg: '<path fill-rule="evenodd" clip-rule="evenodd" d="M2.99805 4.96288C2.99805 3.87827 3.87729 2.99902 4.96189 2.99902H8.88977C9.97437 2.99902 10.8536 3.87827 10.8536 4.96288V8.89047C10.8536 9.97507 9.97437 10.8543 8.88977 10.8543H4.96189C3.87729 10.8543 2.99805 9.97507 2.99805 8.89046V4.96288ZM4.96189 4.69902H8.88977C9.03549 4.69902 9.15362 4.81716 9.15362 4.96288V8.89047C9.15362 9.03619 9.03549 9.15432 8.88977 9.15432H4.96189C4.81617 9.15432 4.69804 9.03619 4.69804 8.89046V4.96288C4.69804 4.81716 4.81617 4.69902 4.96189 4.69902Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M13.1425 4.96288C13.1425 3.87827 14.0218 2.99902 15.1064 2.99902H19.0342C20.1188 2.99902 20.9981 3.87827 20.9981 4.96288V8.89047C20.9981 9.97507 20.1188 10.8543 19.0342 10.8543H15.1064C14.0218 10.8543 13.1425 9.97507 13.1425 8.89046V4.96288ZM15.1064 4.69902H19.0342C19.18 4.69902 19.2981 4.81716 19.2981 4.96288V8.89047C19.2981 9.03619 19.18 9.15432 19.0342 9.15432H15.1064C14.9606 9.15432 14.8425 9.03619 14.8425 8.89046V4.96288C14.8425 4.81716 14.9606 4.69902 15.1064 4.69902Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M15.1064 13.1445C14.0218 13.1445 13.1425 14.0238 13.1425 15.1084V19.036C13.1425 20.1206 14.0218 20.9998 15.1064 20.9998H19.0342C20.1188 20.9998 20.9981 20.1206 20.9981 19.036V15.1084C20.9981 14.0238 20.1188 13.1445 19.0342 13.1445H15.1064ZM19.0342 14.8445H15.1064C14.9606 14.8445 14.8425 14.9627 14.8425 15.1084V19.036C14.8425 19.1817 14.9606 19.2998 15.1064 19.2998H19.0342C19.18 19.2998 19.2981 19.1817 19.2981 19.036V15.1084C19.2981 14.9627 19.18 14.8445 19.0342 14.8445Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M2.99805 15.1084C2.99805 14.0238 3.87729 13.1445 4.96189 13.1445H8.88977C9.97437 13.1445 10.8536 14.0238 10.8536 15.1084V19.036C10.8536 20.1206 9.97437 20.9998 8.88977 20.9998H4.96189C3.87729 20.9998 2.99805 20.1206 2.99805 19.036V15.1084ZM4.96189 14.8445H8.88977C9.03549 14.8445 9.15362 14.9627 9.15362 15.1084V19.036C9.15362 19.1817 9.03549 19.2998 8.88977 19.2998H4.96189C4.81617 19.2998 4.69804 19.1817 4.69804 19.036V15.1084C4.69804 14.9627 4.81617 14.8445 4.96189 14.8445Z" fill="currentColor"></path>',
+  },
+  {
+    key: "hdrSchedule",
+    href: "/schedule",
+    label: "편성표",
+    svg: '<rect x="3.85037" y="5.85" width="16.3" height="14.3" rx="3.15" stroke="currentColor" stroke-width="1.7"></rect><path d="M4.00037 10H20.0004" stroke="currentColor" stroke-width="1.7"></path><path d="M8.00037 4V7.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path><path d="M16.0004 4V7.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>',
+  },
+  {
+    key: "hdrFollowing",
+    href: "/following",
+    label: "팔로잉",
+    svg: '<path fill-rule="evenodd" clip-rule="evenodd" d="M12.0253 5.3322C10.7848 3.94896 8.72606 3.48266 6.93814 3.81809C5.77468 4.03637 4.6373 4.5982 3.78632 5.54266C2.92677 6.49664 2.40039 7.79641 2.40039 9.4033C2.40039 12.4934 4.6905 16.1966 10.4761 19.8404C10.6682 19.9614 11.2673 20.284 11.9971 20.2868C12.7246 20.2897 13.2969 19.9835 13.4784 19.8696C19.2984 16.2161 21.6005 12.5015 21.6005 9.4033C21.6005 6.13381 19.4375 4.2731 17.0962 3.82271C15.3137 3.47979 13.263 3.9427 12.0253 5.3322ZM5.04927 6.68062C4.48981 7.30154 4.10038 8.18784 4.10038 9.4033C4.10038 11.6179 5.77948 14.8734 11.3821 18.402C11.3998 18.4131 11.4875 18.4637 11.6146 18.5098C11.7417 18.5559 11.8777 18.5863 12.0038 18.5868C12.1335 18.5873 12.2636 18.5587 12.3779 18.5185C12.4335 18.4989 12.4808 18.4782 12.5167 18.4606C12.5345 18.4519 12.5489 18.4443 12.5592 18.4386C12.57 18.4326 12.5751 18.4294 12.5746 18.4297C18.2123 14.8908 19.9005 11.6238 19.9005 9.4033C19.9005 7.06057 18.4309 5.81064 16.7751 5.4921C15.0312 5.15663 13.3512 5.8753 12.8194 7.24439C12.6925 7.57126 12.3778 7.78661 12.0272 7.78663C11.6765 7.78666 11.3618 7.57134 11.2348 7.24449C10.7077 5.888 9.01516 5.15808 7.2516 5.48894C6.40218 5.6483 5.61731 6.05018 5.04927 6.68062Z" fill="currentColor"></path>',
+  },
+  {
+    key: "hdrCheezefarm",
+    href: "/cheezefarm",
+    label: "치즈팜",
+    svg: '<path d="M7.54671 8.31941C7.79368 8.122 8.12469 8.07586 8.42464 8.17586L13.5047 9.87019C13.7995 9.96868 14.0314 10.2003 14.1297 10.4952L15.8221 15.5743C15.9221 15.8742 15.8759 16.2043 15.6785 16.4512C13.8267 18.7678 9.40527 22.2398 4.03303 20.5518C3.78937 20.4751 3.59078 20.2973 3.48616 20.0675L3.4471 19.9659C1.75912 14.5937 5.23024 10.1714 7.54671 8.31941ZM8.28303 9.92098C6.29355 11.6585 3.92805 15.0765 4.951 19.047C8.92227 20.0708 12.3394 17.7039 14.077 15.7139L12.6287 11.3692L8.28303 9.92098Z" fill="currentColor"></path><path d="M17.3371 3.28879C17.7228 2.90341 18.3478 2.90341 18.7335 3.28879L20.7101 5.26535C21.0959 5.65118 21.0959 6.27698 20.7101 6.66281L17.047 10.3259C16.6612 10.7117 16.0354 10.7117 15.6496 10.3259L13.673 8.34934C13.2876 7.96359 13.2876 7.3386 13.673 6.95285L17.3371 3.28879ZM15.379 7.6511L16.3478 8.61985L19.004 5.9636L18.0353 4.99485L15.379 7.6511Z" fill="currentColor"></path><path d="M15.9171 9.28511L9.30776 15.8925C8.97575 16.224 8.4374 16.2234 8.10561 15.8916C7.77417 15.5595 7.77479 15.0221 8.10659 14.6904L14.715 8.08198L15.9171 9.28511Z" fill="currentColor"></path>',
+  },
+];
+// 헤더 미니 네비 표시 설정(전역). 미설정 항목은 HEADER_NAV_DEFAULT_SHOWN로 판정.
+let headerNavConfig = {};
+// 사이드바 항목/섹션 숨김 마커 클래스(JS가 식별해 부여, CSS가 숨김).
+const SIDEBAR_HIDE_ITEM_CLASS = "cheese-sb-hide";
 // 재생바 댓글 타임스탬프 마커 표시 on/off(전역, chrome.storage 저장). 디폴트 ON.
 const COMMENT_MARKERS_ENABLED_KEY = "cheeseCommentMarkersEnabled";
 // 댓글 타임스탬프 기능 전체 on/off(버튼 우클릭 메뉴로 토글, 전역 저장). 디폴트 ON.
@@ -3723,9 +3799,9 @@ function formatKstClock(ms) {
   return `${yy}.${mm}.${dd}. ${ampm} ${h12}:${min}:${sec}`;
 }
 
-// liveOpenAt(ms) + 초 → "[26.06.22. 오후 1:49:59]"
+// liveOpenAt(ms) + 초 → "26.06.22. 오후 1:49:59"
 function formatBroadcastClock(baseMs, offsetSeconds) {
-  return `[${formatKstClock(baseMs + offsetSeconds * 1000)}]`;
+  return `${formatKstClock(baseMs + offsetSeconds * 1000)}`;
 }
 
 // 현재 떠 있는 seek preview의 시간 아래에 실제 방송 시각을 병기/갱신한다.
@@ -3772,7 +3848,9 @@ function updateVideoInfoLabel() {
       parts.push(`등록일 : ${formatKstClock(seekPreviewState.publishAt)}`);
     }
     if (seekPreviewState.liveOpenAt) {
-      parts.push(`라이브 시작일 : ${formatKstClock(seekPreviewState.liveOpenAt)}`);
+      parts.push(
+        `라이브 시작일 : ${formatKstClock(seekPreviewState.liveOpenAt)}`,
+      );
     }
     if (!parts.length) return;
     const html = parts.join("<br>");
@@ -4228,13 +4306,15 @@ function updateCommentTimestampPanelCurrentMarker({ scroll = false } = {}) {
   }
   commentMarkerState.currentPanelMarkerSeconds = markerSeconds;
   const shouldScroll =
-    Boolean(markerSeconds) && (scroll || markerSeconds !== previousMarkerSeconds);
+    Boolean(markerSeconds) &&
+    (scroll || markerSeconds !== previousMarkerSeconds);
 
   panel.querySelectorAll("[data-comment-marker-seek]").forEach((button) => {
     const isCurrent =
       markerSeconds &&
-      Math.abs(Number(button.dataset.commentMarkerSeek) - Number(markerSeconds)) <
-        0.001;
+      Math.abs(
+        Number(button.dataset.commentMarkerSeek) - Number(markerSeconds),
+      ) < 0.001;
     button.classList.toggle("is-current", Boolean(isCurrent));
     if (isCurrent) {
       button.setAttribute("aria-current", "true");
@@ -4261,9 +4341,7 @@ function scrollPanelListToButton(panel, button) {
   const itemRect = item.getBoundingClientRect();
   // 항목 중앙이 리스트 중앙에 오도록 현재 scrollTop에서 보정.
   const delta =
-    itemRect.top -
-    listRect.top -
-    (list.clientHeight - itemRect.height) / 2;
+    itemRect.top - listRect.top - (list.clientHeight - itemRect.height) / 2;
   const max = list.scrollHeight - list.clientHeight;
   list.scrollTop = Math.max(0, Math.min(list.scrollTop + delta, max));
 }
@@ -4366,7 +4444,10 @@ function renderCommentTimestampMarkers() {
   }
   // 기능 자체가 꺼졌거나(우클릭 토글) 마커 표시가 꺼져 있으면 재생바 마커를
   // 그리지 않는다. (기능 off는 목록까지 막지만, 여기선 마커 레이어만 정리)
-  if (!commentMarkerState.featureEnabled || !commentMarkerState.markersEnabled) {
+  if (
+    !commentMarkerState.featureEnabled ||
+    !commentMarkerState.markersEnabled
+  ) {
     document
       .querySelectorAll(`.${VIDEO_COMMENT_MARKER_LAYER_CLASS}`)
       .forEach((layer) => layer.remove());
@@ -6206,32 +6287,401 @@ function applyFeatureFlags(value) {
   init();
 }
 
-// 사이드바(aside#sidebar) 숨김을 <style> 규칙으로 토글한다. CSS라 SPA 재렌더에도
-// 유지되고 레이아웃 폭도 함께 회수된다.
+// 사이드바 숨김(전체 + 항목/섹션별)을 <style> 규칙으로 토글한다. CSS라 SPA
+// 재렌더에도 유지되고 레이아웃 폭도 함께 회수된다.
 function applySidebarHidden() {
   let style = document.getElementById(SIDEBAR_HIDE_STYLE_ID);
-  if (!featureFlags.sidebar) {
-    if (style) style.textContent = "";
-    return;
-  }
   if (!style) {
     style = document.createElement("style");
     style.id = SIDEBAR_HIDE_STYLE_ID;
     (document.head || document.documentElement).appendChild(style);
   }
-  // 사이드바를 숨기고, 콘텐츠(div#layout-body)의 좌측 패딩을 0으로 만들어
-  // 비워진 사이드바 공간을 메인 콘텐츠가 차지하게 한다.
-  const rule = `aside#sidebar { display: none !important; } div#layout-body { padding-left: 0 !important; }`;
-  if (style.textContent !== rule) style.textContent = rule;
+  const rules = [];
+  if (featureFlags.sidebar) {
+    // 사이드바 전체를 숨기고, 콘텐츠(div#layout-body) 좌측 패딩을 0으로(공간 회수).
+    rules.push(
+      `aside#sidebar { display: none !important; } div#layout-body { padding-left: 0 !important; }`,
+    );
+  } else {
+    // 섹션별 숨김은 JS 마커 클래스로(텍스트 식별 필요).
+    rules.push(
+      `aside#sidebar .${SIDEBAR_HIDE_ITEM_CLASS} { display: none !important; }`,
+    );
+    // 메뉴 항목 숨김은 href 기반 CSS로 직접 숨긴다 — 치지직이 그리는 즉시 가려져
+    // JS 클래스 부여 지연으로 인한 깜빡임이 없다(:has는 Chromium 105+ 지원).
+    const menuHrefs = {
+      "/lives": featureFlags.sbLives,
+      "/clips": featureFlags.sbClips,
+      "/category": featureFlags.sbCategory,
+      "/schedule": featureFlags.sbSchedule,
+      "/following": featureFlags.sbFollowing,
+      "/cheezefarm": featureFlags.sbCheezefarm,
+    };
+    const hiddenSel = Object.entries(menuHrefs)
+      .filter(([, hide]) => hide)
+      .map(([href]) => `aside#sidebar li:has(> a[href="${href}"])`);
+    if (hiddenSel.length) {
+      rules.push(`${hiddenSel.join(",\n")} { display: none !important; }`);
+    }
+  }
+  // 헤더 '스튜디오' 버튼 숨김 — 텍스트형/아이콘형 둘 다 href가
+  // studio.chzzk.naver.com을 가리키므로 href 기반 CSS로 숨긴다(깜빡임 없음).
+  // 아이콘형일 때 검색창 컨테이너의 ::before(구분 여백)가 남아 보이므로 함께 폭 0.
+  if (featureFlags.headerStudio) {
+    rules.push(
+      `header#header a[href*="studio.chzzk.naver.com"] { display: none !important; }`,
+      `header#header form[role="search"] > :first-child::before,
+header#header :has(> form[role="search"])::before { width: 0 !important; }`,
+      // 버튼을 감싼 박스(_box_)의 우측 패딩이 빈 공간으로 남으므로 0으로.
+      // 숨김 해제 시 이 규칙 자체가 빠져 원래 패딩으로 복구된다.
+      `header#header [class*="_box_"]:has(> a[href*="studio.chzzk.naver.com"]) { padding-right: 0 !important; }`,
+    );
+  }
+  const css = rules.join("\n");
+  if (style.textContent !== css) style.textContent = css;
+  applySidebarSections();
+}
+
+// 사이드바 메뉴 항목/섹션에 숨김 마커 클래스를 부여/제거한다. 클래스 해시는
+// 빌드마다 바뀌므로 href(메뉴 항목)·제목 텍스트(섹션)로 식별한다.
+function applySidebarSections() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+
+  // 1) 메뉴 항목 숨김은 applySidebarHidden의 href 기반 CSS가 처리(깜빡임 방지).
+
+  // 2) 섹션별 숨김: nav를 제목 텍스트로 식별 → nav 토글. 사이드바 접힘/펼침에 따라
+  //    제목이 달라지므로(예: "팔로우"↔"팔로잉 채널", "방송 일정"↔"다가오는 방송 일정")
+  //    정확 일치 대신 부분 포함(includes)으로 매칭한다.
+  const sections = sidebar.querySelectorAll('nav[class*="_section_"]');
+  sections.forEach((nav) => {
+    // 제목(_title_)은 접힘 상태에서 없을 수 있다(서비스 바로가기 등). 그땐 blind
+    // 텍스트도 함께 본다. 둘을 합쳐 부분 일치로 식별.
+    const titleText =
+      nav.querySelector('[class*="_title_"]')?.textContent || "";
+    const blindText = nav.querySelector(".blind")?.textContent || "";
+    const label = (titleText + " " + blindText).replace(/\s+/g, "");
+    let hidden = null; // null=대상 아님(건드리지 않음)
+    if (label.includes("팔로"))
+      hidden = featureFlags.sbFollow; // 팔로우/팔로잉
+    else if (label.includes("인기카테고리"))
+      hidden = featureFlags.sbPopularCategory;
+    else if (label.includes("방송일정"))
+      hidden = featureFlags.sbBroadcastSchedule;
+    else if (label.includes("파트너")) hidden = featureFlags.sbPartner;
+    else if (label.includes("서비스바로가기")) hidden = featureFlags.sbServices;
+    if (hidden !== null) {
+      nav.classList.toggle(SIDEBAR_HIDE_ITEM_CLASS, Boolean(hidden));
+      // 팔로잉 섹션이면 오프라인 항목 숨김도 함께 처리.
+      if (label.includes("팔로")) applyFollowOffline(nav);
+    }
+  });
+}
+
+// 팔로잉 섹션(치지직 원본)의 오프라인 채널 li를 숨긴다. 오프라인 = 프로필에
+// _is_live_ 클래스가 없는 항목(또는 blind "오프라인"). 우리가 렌더한 ul은 라이브만이라
+// 대상이 아님.
+function applyFollowOffline(followNav) {
+  const hide = featureFlags.sbFollowOffline;
+  const originalUl = followNav.querySelector('ul[class*="_list_"]');
+  if (!originalUl) return;
+  originalUl.querySelectorAll(":scope > li").forEach((li) => {
+    li.classList.toggle(
+      "cheese-sb-offline-hide",
+      hide && isOfflineFollowItem(li),
+    );
+  });
+}
+
+// 팔로잉 li가 오프라인인지 판정. blind 텍스트("오프라인"/"LIVE")를 1순위(해시 무관),
+// _is_live_ 클래스를 폴백으로 본다. 둘 다 애매하면 라이브로 간주(숨기지 않음=보수적).
+function isOfflineFollowItem(li) {
+  const profile = li.querySelector('[class*="_profile_"]');
+  if (!profile) return false;
+  const blind = (profile.querySelector(".blind")?.textContent || "").trim();
+  if (blind === "오프라인") return true;
+  if (blind === "LIVE") return false;
+  return !/_is_live_/.test(profile.className);
+}
+
+// ── 사이드바 전담 옵저버(섹션 숨김 깜빡임 최소화) ───────────────────────────
+// 전역 init은 120ms 디바운스라 치지직 재렌더~우리 클래스 부여 사이에 항목이 잠깐
+// 보였다 사라진다. 사이드바만 보는 전담 옵저버로 디바운스 없이 즉시 섹션 클래스를
+// 다시 부여해 깜빡임 창을 최소화한다.
+let sidebarObserver = null;
+let sidebarObservedRoot = null;
+function ensureSidebarObserver() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  if (sidebarObservedRoot === sidebar && sidebarObserver) return;
+  if (sidebarObserver) sidebarObserver.disconnect();
+  sidebarObservedRoot = sidebar;
+  sidebarObserver = new MutationObserver(() => {
+    // 동기 즉시 재적용(디바운스 없음). applySidebarSections는 멱등(toggle force).
+    applySidebarSections();
+  });
+  sidebarObserver.observe(sidebar, { childList: true, subtree: true });
+  applySidebarSections();
+}
+
+// ── 헤더 미니 네비 주입/유지 ──────────────────────────────────────────────
+// 한 항목이 표시 대상인지(설정값 우선, 미설정이면 기본 표시 집합으로 판정).
+function isHeaderNavShown(key) {
+  const v = headerNavConfig[key];
+  return typeof v === "boolean" ? v : HEADER_NAV_DEFAULT_SHOWN.has(key);
+}
+
+// 사이드바 숨김 + 표시 항목이 하나라도 있으면 헤더에 미니 네비를 보장한다.
+// 스튜디오 버튼을 감싼 박스(_box_) 앞에 두며, 없으면 헤더 첫 section 앞에 둔다.
+// React 재렌더로 사라질 수 있어 init/옵저버에서 멱등 재호출.
+function ensureHeaderNav() {
+  const header = document.getElementById("header");
+  if (!header) return;
+
+  const shouldShow =
+    featureFlags.sidebar &&
+    HEADER_NAV_ITEMS.some((it) => isHeaderNavShown(it.key));
+  let container = header.querySelector(`#${HEADER_NAV_CONTAINER_ID}`);
+
+  if (!shouldShow) {
+    if (container) container.remove();
+    return;
+  }
+
+  // 컨테이너 보장(없으면 생성). 클릭은 위임 핸들러 1개로 처리(innerHTML 재구성에도
+  // 살아남음). 전체 리로드 대신 치지직 SPA 라우터로 부분 네비게이션시킨다.
+  if (!container) {
+    container = document.createElement("nav");
+    container.id = HEADER_NAV_CONTAINER_ID;
+    container.setAttribute("aria-label", "바로가기");
+    container.addEventListener("click", onHeaderNavClick);
+  }
+
+  // 위치 보장: 항상 '스튜디오 버튼 박스(_box_) 앞'을 목표로 한다. 새로고침/페이지
+  // 이동 직후엔 스튜디오 버튼이 아직 렌더 전이라 못 찾을 수 있는데, 그땐 헤더
+  // 마지막 section에 임시로 둔다. 이후 옵저버가 다시 호출될 때 스튜디오 버튼이
+  // 나타나면 그 앞으로 다시 옮긴다(이미 옳은 위치면 이동하지 않음 → 자가발화 방지).
+  const studioAnchor = header.querySelector(
+    'a[href*="studio.chzzk.naver.com"]',
+  );
+  const studioBox = studioAnchor?.closest('[class*="_box_"]') || studioAnchor;
+  if (studioBox && studioBox.parentElement) {
+    // 목표: studioBox 바로 앞. 이미 그 위치면 건드리지 않는다.
+    if (container.nextElementSibling !== studioBox) {
+      studioBox.parentElement.insertBefore(container, studioBox);
+    }
+  } else {
+    // 스튜디오 버튼이 아직 없으면 마지막 section(없으면 헤더)에 임시 배치.
+    const fallback =
+      header.querySelector('[class*="_section_"]:last-of-type') || header;
+    if (
+      container.parentElement !== fallback ||
+      fallback.lastElementChild !== container
+    ) {
+      fallback.appendChild(container);
+    }
+  }
+
+  // 항목 시그니처(표시 항목 key 순서)로 변경 시에만 재구성 → 불필요한 리플로우 방지.
+  const sig = HEADER_NAV_ITEMS.filter((it) => isHeaderNavShown(it.key))
+    .map((it) => it.key)
+    .join(",");
+  if (container.dataset.sig === sig) return;
+  container.dataset.sig = sig;
+
+  const html = HEADER_NAV_ITEMS.filter((it) => isHeaderNavShown(it.key))
+    .map(
+      (it) =>
+        `<a class="cheese-header-nav-item" href="${it.href}" aria-label="${it.label}" data-label="${it.label}">` +
+        `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${it.svg}</svg>` +
+        `</a>`,
+    )
+    .join("");
+  if (container.innerHTML !== html) container.innerHTML = html;
+}
+
+// 헤더 미니 네비 클릭 → 전체 리로드 대신 치지직 SPA 라우터로 부분 네비게이션.
+// 우리 <a>는 순수 링크라 React Router가 모른다 → 기본 동작이 full reload가 된다.
+function onHeaderNavClick(event) {
+  // 새 탭/새 창/다운로드 등 사용자의 보조키 동작은 브라우저 기본에 맡긴다.
+  if (
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  )
+    return;
+  const anchor = event.target.closest("a.cheese-header-nav-item");
+  if (!anchor) return;
+  const href = anchor.getAttribute("href");
+  if (!href) return;
+  event.preventDefault();
+  spaNavigate(href);
+}
+
+// 같은 경로로 가는 치지직(React) 링크를 찾아 그 요소를 클릭한다 → 라우터가
+// 부분 렌더(div#layout-body)로 처리. 사이드바가 숨겨져도(display:none) DOM엔
+// 존재하므로 클릭이 먹는다. 못 찾으면 history.pushState로 폴백.
+function spaNavigate(href) {
+  // 사이드바(숨김 상태 포함) → 헤더 → 문서 전체 순으로 동일 href의 치지직 링크 탐색.
+  // 우리 컨테이너 내부 링크는 제외(자기 자신 클릭 무한루프 방지).
+  const scopes = [
+    document.getElementById("sidebar"),
+    document.getElementById("header"),
+    document,
+  ];
+  for (const scope of scopes) {
+    if (!scope) continue;
+    const links = scope.querySelectorAll(`a[href="${href}"]`);
+    for (const link of links) {
+      if (link.closest(`#${HEADER_NAV_CONTAINER_ID}`)) continue;
+      link.click();
+      return;
+    }
+  }
+  // 폴백: 라우터가 직접 클릭할 링크를 못 찾은 경우. pushState 후 popstate를 쏴
+  // 라우터가 경로 변화를 감지하게 한다(반응 안 하면 위 링크 클릭이 정답이라 드묾).
+  try {
+    history.pushState({}, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+  } catch {
+    location.href = href; // 최후엔 전체 이동.
+  }
+}
+
+// 헤더 전담 옵저버(미니 네비가 React 재렌더로 사라지면 즉시 복구).
+let headerObserver = null;
+let headerObservedRoot = null;
+function ensureHeaderObserver() {
+  const header = document.getElementById("header");
+  if (!header) return;
+  if (headerObservedRoot === header && headerObserver) return;
+  if (headerObserver) headerObserver.disconnect();
+  headerObservedRoot = header;
+  headerObserver = new MutationObserver(() => {
+    // 우리 컨테이너 변경으로 자가 발화하지 않도록 ensureHeaderNav는 멱등(시그니처 비교).
+    ensureHeaderNav();
+  });
+  headerObserver.observe(header, { childList: true, subtree: true });
+  ensureHeaderNav();
+}
+
+async function loadHeaderNav() {
+  if (!chrome.storage?.local) return;
+  try {
+    const data = await chrome.storage.local.get(HEADER_NAV_KEY);
+    const v = data?.[HEADER_NAV_KEY];
+    headerNavConfig = v && typeof v === "object" ? v : {};
+  } catch {
+    headerNavConfig = {};
+  }
+  ensureHeaderNav();
+}
+
+// ── 사이드바 팔로우 채널 주기 갱신(치지직 새로고침 버튼 자동 클릭) ───────────
+// 우리가 DOM을 만들지 않고, 치지직 '새로고침' 버튼을 주기적으로 클릭해 React가
+// 스스로 갱신하게 한다(충돌 없음). 0=끔, 그 외 30/60/120초.
+const FOLLOW_REFRESH_KEY = "cheeseFollowRefreshSec";
+let followRefreshSec = 0;
+let followRefreshTimer = 0;
+
+function clickFollowRefresh() {
+  if (document.hidden) return;
+  const nav = findFollowNavForRefresh();
+  if (!nav) return;
+  // 새로고침 버튼은 펼침 상태에만 존재한다 → 접힘 상태에선 버튼이 없어 자동
+  // 클릭이 일어나지 않는다(=펼침 상태에서만 갱신). 접힘은 치지직 기본 동작 유지.
+  // (API 직접 호출은 치지직 React 상태를 못 바꿔 사이드바/툴팁이 갱신되지 않으므로
+  //  쓰지 않는다.)
+  const btn = nav.querySelector('button[aria-label="새로고침"]');
+  if (btn) btn.click();
+}
+
+function findFollowNavForRefresh() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return null;
+  const navs = sidebar.querySelectorAll('nav[class*="_section_"]');
+  for (const nav of navs) {
+    const title = (
+      nav.querySelector('[class*="_title_"]')?.textContent || ""
+    ).replace(/\s+/g, "");
+    if (title.includes("팔로")) return nav;
+  }
+  return null;
+}
+
+// 10초 이하로 짧게 설정하면 연속 호출이 rate-limit에 걸릴 수 있어, '설정값 ↔
+// 설정값~10초 랜덤'을 번갈아 호출한다(짧은 갱신 + 가끔 긴 간격으로 부담 분산).
+const FOLLOW_REFRESH_SHORT_THRESHOLD = 10;
+const FOLLOW_REFRESH_RANDOM_MAX = 10; // 랜덤 간격 상한(초)
+let followRefreshAlternate = false; // 다음 간격이 '긴(랜덤)' 차례인지
+
+// 다음 호출까지의 간격(ms)을 계산한다. 짧은 설정이면 설정값과 설정값~10초 랜덤을
+// 번갈아(설정값이 하한 → 최소한 설정한 만큼은 기다리되 가끔 최대 10초까지 늘림).
+function nextFollowRefreshDelayMs() {
+  if (followRefreshSec <= FOLLOW_REFRESH_SHORT_THRESHOLD) {
+    followRefreshAlternate = !followRefreshAlternate;
+    if (followRefreshAlternate) {
+      const span = Math.max(0, FOLLOW_REFRESH_RANDOM_MAX - followRefreshSec);
+      return (followRefreshSec + Math.random() * span) * 1000;
+    }
+  }
+  return followRefreshSec * 1000;
+}
+
+function startFollowRefreshTimer() {
+  stopFollowRefreshTimer();
+  if (!followRefreshSec) return;
+  followRefreshAlternate = false;
+  const tick = () => {
+    clickFollowRefresh();
+    // 매번 다음 간격을 새로 계산(가변 간격이라 setInterval 대신 setTimeout 체인).
+    followRefreshTimer = setTimeout(tick, nextFollowRefreshDelayMs());
+  };
+  followRefreshTimer = setTimeout(tick, nextFollowRefreshDelayMs());
+}
+
+function stopFollowRefreshTimer() {
+  if (followRefreshTimer) {
+    clearTimeout(followRefreshTimer);
+    followRefreshTimer = 0;
+  }
+}
+
+// 0=끔, 그 외 3~600초로 클램프. 잘못된 값/음수는 끔으로.
+function applyFollowRefresh(secRaw) {
+  let sec = Number(secRaw);
+  if (!Number.isFinite(sec) || sec <= 0) sec = 0;
+  else sec = Math.min(600, Math.max(3, sec));
+  followRefreshSec = sec;
+  startFollowRefreshTimer();
+}
+
+async function loadFollowRefresh() {
+  if (!chrome.storage?.local) return;
+  try {
+    const data = await chrome.storage.local.get(FOLLOW_REFRESH_KEY);
+    applyFollowRefresh(data?.[FOLLOW_REFRESH_KEY]);
+  } catch {}
 }
 
 // 기능 플래그 + 따라잡기 프리셋을 MAIN world(오디오믹서 등)에 한 번에 전달.
+// 저장된 프리셋 문자열을 유효값으로 정규화(low/normal/high/custom, 그 외 normal).
+function normalizeSyncPresetValue(p) {
+  return p === "low" || p === "normal" || p === "high" || p === "custom"
+    ? p
+    : "normal";
+}
+
 function broadcastFeatureFlags() {
   window.postMessage(
     {
       source: FEATURE_FLAGS_MESSAGE,
       flags: { ...featureFlags },
       syncPreset: syncPresetValue,
+      syncCustom: syncCustomValue, // {enable,target} 또는 null
     },
     location.origin,
   );
@@ -6243,11 +6693,11 @@ async function loadFeatureFlags() {
     const data = await chrome.storage.local.get([
       FEATURE_HIDDEN_KEY,
       SYNC_PRESET_KEY,
+      SYNC_CUSTOM_KEY,
     ]);
-    const preset = data?.[SYNC_PRESET_KEY];
-    if (preset === "low" || preset === "normal" || preset === "high") {
-      syncPresetValue = preset;
-    }
+    syncPresetValue = normalizeSyncPresetValue(data?.[SYNC_PRESET_KEY]);
+    const custom = data?.[SYNC_CUSTOM_KEY];
+    syncCustomValue = custom && typeof custom === "object" ? custom : null;
     applyFeatureFlags(data?.[FEATURE_HIDDEN_KEY]); // 내부에서 broadcast
   } catch {
     // 실패 시 전부 표시(기본값) 유지.
@@ -6258,16 +6708,26 @@ if (chrome.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes[SYNC_PRESET_KEY]) {
-      const preset = changes[SYNC_PRESET_KEY].newValue;
-      syncPresetValue =
-        preset === "low" || preset === "normal" || preset === "high"
-          ? preset
-          : "normal";
+      syncPresetValue = normalizeSyncPresetValue(
+        changes[SYNC_PRESET_KEY].newValue,
+      );
+    }
+    if (changes[SYNC_CUSTOM_KEY]) {
+      const custom = changes[SYNC_CUSTOM_KEY].newValue;
+      syncCustomValue = custom && typeof custom === "object" ? custom : null;
     }
     if (changes[FEATURE_HIDDEN_KEY]) {
       applyFeatureFlags(changes[FEATURE_HIDDEN_KEY].newValue); // broadcast 포함
-    } else if (changes[SYNC_PRESET_KEY]) {
-      broadcastFeatureFlags(); // 프리셋만 바뀐 경우도 전달
+    } else if (changes[SYNC_PRESET_KEY] || changes[SYNC_CUSTOM_KEY]) {
+      broadcastFeatureFlags(); // 프리셋/커스텀만 바뀐 경우도 전달
+    }
+    if (changes[FOLLOW_REFRESH_KEY]) {
+      applyFollowRefresh(changes[FOLLOW_REFRESH_KEY].newValue);
+    }
+    if (changes[HEADER_NAV_KEY]) {
+      const v = changes[HEADER_NAV_KEY].newValue;
+      headerNavConfig = v && typeof v === "object" ? v : {};
+      ensureHeaderNav();
     }
   });
 }
@@ -6275,6 +6735,11 @@ if (chrome.storage?.onChanged) {
 function init() {
   initCommentTimestampMarkers();
   initSeekPreviewRealtime();
+  // 사이드바는 SPA 재렌더로 마커 클래스가 지워질 수 있어 매 init마다 다시 부여한다.
+  applySidebarSections();
+  ensureSidebarObserver(); // 사이드바 전담 옵저버로 즉시 재적용(깜빡임 최소화)
+  ensureHeaderNav(); // 사이드바 숨김 시 헤더 미니 네비 보장
+  ensureHeaderObserver(); // 헤더 재렌더로 사라지면 즉시 복구
 
   cleanupStudioMakeClipViewIfInactive();
 
@@ -6793,6 +7258,8 @@ async function handleProgressStall() {
 
 init();
 void loadFeatureFlags();
+void loadFollowRefresh();
+void loadHeaderNav();
 
 // MAIN world 스크립트가 로드 후 플래그를 요청하면 현재 값을 보내준다(레이스 방지).
 window.addEventListener("message", (event) => {

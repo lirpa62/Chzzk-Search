@@ -9,10 +9,10 @@ VERSION="$(
   ruby -rjson -e 'puts JSON.parse(File.read(ARGV[0]))["version"]' \
     "$ROOT_DIR/manifest.json"
 )"
-BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chzzk-search-chrome-build.XXXXXX")"
-TEMP_ZIP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chzzk-search-chrome-package.XXXXXX")"
+BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chzzk-platter-chrome-build.XXXXXX")"
+TEMP_ZIP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/chzzk-platter-chrome-package.XXXXXX")"
 TEMP_ZIP="$TEMP_ZIP_DIR/package.zip"
-FINAL_ZIP="$DIST_DIR/chzzk-search-chrome-v${VERSION}.zip"
+FINAL_ZIP="$DIST_DIR/chzzk-platter-chrome-v${VERSION}.zip"
 
 cleanup() {
   rm -rf "$BUILD_DIR" "$TEMP_ZIP_DIR"

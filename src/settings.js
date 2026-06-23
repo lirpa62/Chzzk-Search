@@ -31,6 +31,34 @@
   applyTheme(localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light");
   themeToggle?.addEventListener("click", toggleTheme);
 
+  // ── 카테고리 탭(좌측 탭 → 우측 패널 전환) ─────────────────────────────────
+  // 팝업을 열 때마다 항상 첫 탭('전체')에서 시작한다(설정 팝업은 예측 가능성이
+  // 직전 탭 기억보다 중요 → 마지막 탭을 저장하지 않는다).
+  const tabButtons = Array.from(document.querySelectorAll(".settings-tab"));
+  const panels = Array.from(document.querySelectorAll("[data-panel]"));
+  const panelsScroll = document.querySelector(".settings-panels");
+
+  function selectTab(tab) {
+    const valid = tabButtons.some((b) => b.dataset.tab === tab);
+    const active = valid ? tab : "all";
+    tabButtons.forEach((btn) => {
+      const on = btn.dataset.tab === active;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-selected", String(on));
+    });
+    panels.forEach((panel) => {
+      // '전체'는 모든 패널 표시. 그 외엔 일치하는 패널만.
+      panel.hidden = active !== "all" && panel.dataset.panel !== active;
+    });
+    // 탭 전환 시 우측 패널 스크롤을 최상단으로(이전 위치 잔류 방지).
+    if (panelsScroll) panelsScroll.scrollTop = 0;
+  }
+
+  tabButtons.forEach((btn) =>
+    btn.addEventListener("click", () => selectTab(btn.dataset.tab)),
+  );
+  selectTab("all");
+
   const FEATURE_HIDDEN_KEY = "cheeseFeatureHidden";
   // 미설정 시 기본 체크(숨김)인 항목. clipLiveButton은 기본적으로 숨긴다.
   const DEFAULT_HIDDEN = new Set(["clipLiveButton"]);
@@ -67,15 +95,70 @@
   inputs.forEach((input) => input.addEventListener("change", save));
   load();
 
-  // ── 실시간 따라잡기 민감도 프리셋 ─────────────────────────────────────────
-  const SYNC_PRESET_KEY = "cheeseSyncPreset";
-  const syncButtons = Array.from(
-    document.querySelectorAll("[data-sync-preset]"),
+  // ── 헤더 바로가기(사이드바 숨김 시 헤더 미니 네비 표시 항목) ───────────────
+  // data-feature와 의미가 반대: 체크=표시. 미설정 시 기본 표시 항목은 아래 집합.
+  const HEADER_NAV_KEY = "cheeseHeaderNav";
+  const HEADER_NAV_DEFAULT_SHOWN = new Set([
+    "hdrLives",
+    "hdrClips",
+    "hdrCategory",
+    "hdrFollowing",
+  ]);
+  const headerNavInputs = Array.from(
+    document.querySelectorAll("[data-header-nav]"),
   );
+
+  async function loadHeaderNav() {
+    let saved = {};
+    try {
+      const data = await chrome.storage?.local?.get(HEADER_NAV_KEY);
+      const value = data?.[HEADER_NAV_KEY];
+      if (value && typeof value === "object") saved = value;
+    } catch {}
+    headerNavInputs.forEach((input) => {
+      const key = input.dataset.headerNav;
+      const v = saved[key];
+      input.checked =
+        typeof v === "boolean" ? v : HEADER_NAV_DEFAULT_SHOWN.has(key);
+    });
+  }
+
+  function saveHeaderNav() {
+    const cfg = {};
+    headerNavInputs.forEach((input) => {
+      cfg[input.dataset.headerNav] = input.checked;
+    });
+    try {
+      chrome.storage?.local?.set({ [HEADER_NAV_KEY]: cfg });
+    } catch {}
+  }
+
+  headerNavInputs.forEach((input) =>
+    input.addEventListener("change", saveHeaderNav),
+  );
+  loadHeaderNav();
+
+  // ── 실시간 따라잡기 민감도 프리셋(low/normal/high/custom) ──────────────────
+  const SYNC_PRESET_KEY = "cheeseSyncPreset";
+  const SYNC_CUSTOM_KEY = "cheeseSyncCustom"; // {enable, target}
+  const SYNC_CUSTOM_DEFAULT = { enable: 3, target: 2 };
+  const syncButtons = Array.from(document.querySelectorAll("[data-sync-preset]"));
+  const syncCustomRow = document.getElementById("syncCustomRow");
+  const syncCustomEnable = document.getElementById("syncCustomEnable");
+  const syncCustomTarget = document.getElementById("syncCustomTarget");
+
+  const clamp = (n, min, max, fallback) => {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return fallback;
+    return Math.min(max, Math.max(min, v));
+  };
 
   function reflectSyncPreset(value) {
     const preset =
-      value === "low" || value === "normal" || value === "high"
+      value === "low" ||
+      value === "normal" ||
+      value === "high" ||
+      value === "custom"
         ? value
         : "normal";
     syncButtons.forEach((btn) => {
@@ -83,14 +166,40 @@
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-checked", String(active));
     });
+    if (syncCustomRow) syncCustomRow.hidden = preset !== "custom";
+  }
+
+  // 커스텀 입력값을 정규화(목표 1~10, 시작 2~30, 시작 > 목표)하고 저장.
+  function saveSyncCustom() {
+    let target = clamp(syncCustomTarget?.value, 1, 10, SYNC_CUSTOM_DEFAULT.target);
+    let enable = clamp(syncCustomEnable?.value, 2, 30, SYNC_CUSTOM_DEFAULT.enable);
+    if (enable <= target) enable = Math.min(30, target + 0.5);
+    if (syncCustomTarget) syncCustomTarget.value = String(target);
+    if (syncCustomEnable) syncCustomEnable.value = String(enable);
+    try {
+      chrome.storage?.local?.set({ [SYNC_CUSTOM_KEY]: { enable, target } });
+    } catch {}
   }
 
   async function loadSyncPreset() {
     let value = "normal";
+    let custom = { ...SYNC_CUSTOM_DEFAULT };
     try {
-      const data = await chrome.storage?.local?.get(SYNC_PRESET_KEY);
+      const data = await chrome.storage?.local?.get([
+        SYNC_PRESET_KEY,
+        SYNC_CUSTOM_KEY,
+      ]);
       if (data?.[SYNC_PRESET_KEY]) value = data[SYNC_PRESET_KEY];
+      const c = data?.[SYNC_CUSTOM_KEY];
+      if (c && typeof c === "object") {
+        custom = {
+          enable: clamp(c.enable, 2, 30, SYNC_CUSTOM_DEFAULT.enable),
+          target: clamp(c.target, 1, 10, SYNC_CUSTOM_DEFAULT.target),
+        };
+      }
     } catch {}
+    if (syncCustomEnable) syncCustomEnable.value = String(custom.enable);
+    if (syncCustomTarget) syncCustomTarget.value = String(custom.target);
     reflectSyncPreset(value);
   }
 
@@ -101,7 +210,81 @@
       try {
         chrome.storage?.local?.set({ [SYNC_PRESET_KEY]: value });
       } catch {}
+      // 커스텀 선택 시 현재 입력값도 함께 저장(이전 값이 없으면 기본값 기록).
+      if (value === "custom") saveSyncCustom();
     });
   });
+  // 커스텀 입력 변경은 즉시 정규화 후 저장(blur/change 시).
+  [syncCustomEnable, syncCustomTarget].forEach((el) =>
+    el?.addEventListener("change", saveSyncCustom),
+  );
   loadSyncPreset();
+
+  // ── 팔로우 채널 자동 갱신(0=끔/30/60초 프리셋 + 커스텀 3~600초) ────────────
+  const FOLLOW_REFRESH_KEY = "cheeseFollowRefreshSec";
+  const FOLLOW_PRESETS = [0, 30, 60];
+  const FOLLOW_CUSTOM_DEFAULT = 5;
+  const followRefreshButtons = Array.from(
+    document.querySelectorAll("[data-follow-refresh]"),
+  );
+  const followCustomRow = document.getElementById("followCustomRow");
+  const followCustomSec = document.getElementById("followCustomSec");
+
+  // 저장된 초 값(0 또는 3~600)을 보고 어떤 버튼이 활성인지 결정한다. 프리셋 값과
+  // 정확히 같으면 그 프리셋, 아니면(끔 제외) 커스텀.
+  function reflectFollowRefresh(secRaw) {
+    let sec = Number(secRaw);
+    if (!Number.isFinite(sec) || sec <= 0) sec = 0;
+    const isPreset = FOLLOW_PRESETS.includes(sec);
+    const activeKey = sec === 0 ? "0" : isPreset ? String(sec) : "custom";
+    followRefreshButtons.forEach((btn) => {
+      const active = btn.dataset.followRefresh === activeKey;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-checked", String(active));
+    });
+    if (followCustomRow) followCustomRow.hidden = activeKey !== "custom";
+  }
+
+  function saveFollowCustom() {
+    let sec = clamp(followCustomSec?.value, 3, 600, FOLLOW_CUSTOM_DEFAULT);
+    sec = Math.round(sec);
+    if (followCustomSec) followCustomSec.value = String(sec);
+    try {
+      chrome.storage?.local?.set({ [FOLLOW_REFRESH_KEY]: sec });
+    } catch {}
+  }
+
+  async function loadFollowRefresh() {
+    let sec = 0;
+    try {
+      const data = await chrome.storage?.local?.get(FOLLOW_REFRESH_KEY);
+      if (data?.[FOLLOW_REFRESH_KEY] != null) sec = data[FOLLOW_REFRESH_KEY];
+    } catch {}
+    // 커스텀 입력칸 초기값: 저장값이 커스텀 범위면 그 값, 아니면 기본.
+    const n = Number(sec);
+    const customInit =
+      Number.isFinite(n) && n >= 3 && n <= 600 && !FOLLOW_PRESETS.includes(n)
+        ? Math.round(n)
+        : FOLLOW_CUSTOM_DEFAULT;
+    if (followCustomSec) followCustomSec.value = String(customInit);
+    reflectFollowRefresh(sec);
+  }
+
+  followRefreshButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.followRefresh;
+      if (key === "custom") {
+        reflectFollowRefresh(Number(followCustomSec?.value) || FOLLOW_CUSTOM_DEFAULT);
+        saveFollowCustom();
+      } else {
+        const sec = Number(key);
+        reflectFollowRefresh(sec);
+        try {
+          chrome.storage?.local?.set({ [FOLLOW_REFRESH_KEY]: sec });
+        } catch {}
+      }
+    });
+  });
+  followCustomSec?.addEventListener("change", saveFollowCustom);
+  loadFollowRefresh();
 })();

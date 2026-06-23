@@ -116,7 +116,7 @@ function showUpdateNotificationBanner(version) {
 
   banner.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap">
-      <span>치즈 서치가 v${version}으로 업데이트되었습니다. 정상적인 사용을 위해 페이지를 새로고침해 주세요.</span>
+      <span>치즈 플래터가 v${version}으로 업데이트되었습니다. 정상적인 사용을 위해 페이지를 새로고침해 주세요.</span>
       <button type="button" data-cheese-search-update-refresh style="border:0;border-radius:5px;padding:5px 10px;background:#fff;color:#087b2b;font-size:13px;font-weight:700;line-height:18px;cursor:pointer">새로고침</button>
       <button type="button" data-cheese-search-update-close aria-label="업데이트 안내 닫기" style="display:inline-flex;align-items:center;justify-content:center;border:0;padding:4px;background:transparent;color:#fff;line-height:1;cursor:pointer">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">

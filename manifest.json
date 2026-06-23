@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "치즈 서치 - Chzzk Search",
-  "short_name": "Chzzk Search",
-  "version": "1.3.0",
-  "description": "치지직 채널의 다시보기와 클립을 검색합니다.",
+  "name": "치즈 플래터 - Chzzk Platter",
+  "short_name": "Chzzk Platter",
+  "version": "1.4.0",
+  "description": "치지직 검색·오디오 믹서·비디오 필터·실시간 따라잡기·레이아웃 정리를 한 접시에.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -53,7 +53,7 @@
     }
   ],
   "action": {
-    "default_title": "치즈 서치",
+    "default_title": "치즈 플래터",
     "default_popup": "settings.html",
     "default_icon": {
       "16": "icons/icon-16.png",

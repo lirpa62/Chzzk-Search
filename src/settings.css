@@ -8,7 +8,12 @@ html {
 body {
   /* popup.css의 검색용 min-width(380px)를 덮어 설정 셸 폭에 맞춘다(우측 여백 제거) */
   min-width: 0;
-  width: max-content;
+  width: 500px;
+  max-width: 100vw;
+  /* 팝업 전체는 스크롤하지 않고, 우측 패널(.settings-panels)만 스크롤한다.
+     (확장 팝업은 로드 직후 100vh가 0에 가까워 max-height:100vh를 쓰면 찌부러진다) */
+  height: 600px;
+  overflow: hidden;
   margin: 0;
   background: var(--popup-bg);
   color: var(--popup-text);
@@ -41,9 +46,79 @@ body {
 
 .settings-shell {
   box-sizing: border-box;
-  width: 340px;
+  width: 500px;
   max-width: 100vw;
+  height: 100%;
   padding: 16px;
+  /* 헤더/힌트는 고정, 아래 .settings-layout이 남은 높이를 채운다(세로 플렉스). */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 좌측 탭 + 우측 패널 분리 레이아웃 — 남은 높이를 채우고, 패널만 스크롤 */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 128px 1fr;
+  gap: 14px;
+  align-items: start;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-tab {
+  appearance: none;
+  text-align: left;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--popup-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.settings-tab:hover {
+  background: var(--popup-soft-bg);
+}
+
+.settings-tab.is-active {
+  background: var(--popup-help-bg);
+  color: var(--popup-brand-strong);
+}
+
+.settings-panels {
+  min-width: 0;
+  /* 우측 패널만 세로 스크롤(좌측 탭/상단 헤더는 고정). 그리드가 고정 높이라
+     align-self: stretch + min-height: 0로 셀 높이를 채우고 내부에서 스크롤. */
+  align-self: stretch;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  /* 스크롤바 영역을 항상 확보(stable) → 스크롤 유무에 따라 콘텐츠 폭이 바뀌지 않음.
+     gutter 안쪽에 우측 패딩을 줘 콘텐츠가 스크롤바에 붙지 않게 한다. */
+  scrollbar-gutter: stable;
+  padding-right: 8px;
+}
+
+/* 패널이 hidden일 때 확실히 숨김(설정 그룹 margin 영향 제거) */
+.settings-panels [data-panel][hidden] {
+  display: none;
+}
+
+/* 패널 영역의 첫 그룹 상단 여백 제거(탭과 정렬) */
+.settings-panels .settings-group:first-of-type {
+  margin-top: 0;
 }
 
 .settings-header {
@@ -85,7 +160,7 @@ body {
 
 .settings-group-title {
   margin: 0 0 6px;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.4px;
   text-transform: uppercase;
@@ -196,6 +271,67 @@ body {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+}
+
+/* 4칸 세그먼트(프리셋 3개 + 커스텀) */
+.settings-segmented-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* 커스텀 입력 행(따라잡기/팔로우 갱신) */
+.settings-custom-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-custom-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 110px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--popup-muted);
+}
+
+.settings-custom-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--popup-border);
+  border-radius: 8px;
+  background: var(--popup-surface);
+}
+
+.settings-custom-input:focus-within {
+  border-color: var(--popup-brand);
+}
+
+.settings-custom-input input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--popup-text);
+  font-size: 14px;
+  font-weight: 700;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.settings-custom-input input::-webkit-outer-spin-button,
+.settings-custom-input input::-webkit-inner-spin-button {
+  margin: 0;
+}
+
+.settings-custom-input small {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--popup-muted);
 }
 
 .settings-segmented button {

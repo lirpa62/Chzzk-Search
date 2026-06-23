@@ -22,8 +22,10 @@
     featureFlags.audioMixer = f.audioMixer === true;
     featureFlags.streamStats = f.streamStats === true;
     featureFlags.liveSync = f.liveSync === true;
-    // 따라잡기 민감도 프리셋(낮음/보통/높음). content.js가 chrome.storage에서 읽어 전달.
-    if (typeof applySyncPreset === "function") applySyncPreset(e.data.syncPreset);
+    // 따라잡기 민감도 프리셋(낮음/보통/높음/커스텀). content.js가 chrome.storage에서
+    // 읽어 전달. custom이면 syncCustom={enable,target}을 함께 받는다.
+    if (typeof applySyncPreset === "function")
+      applySyncPreset(e.data.syncPreset, e.data.syncCustom);
     if (typeof tick === "function") tick();
   });
   // 로드 직후 현재 플래그를 요청한다(content.js의 초기 송신을 놓쳤을 수 있으므로).
@@ -3502,11 +3504,35 @@
   }
 
   // 따라잡기 민감도 프리셋 적용(자동·수동 임계/목표 지연 모두). 알 수 없는 값이면 보통.
-  function applySyncPreset(key) {
-    const next = SYNC_PRESETS[key] ? key : "normal";
-    if (next === syncPresetKey) return;
+  // 커스텀 입력값을 안전 범위로 정규화. 목표 1~10초, 시작 2~30초, 시작 > 목표 보장.
+  function normalizeSyncCustom(custom) {
+    const c = custom && typeof custom === "object" ? custom : {};
+    let target = Number(c.target);
+    let enable = Number(c.enable);
+    if (!Number.isFinite(target)) target = SYNC_PRESETS.normal.target;
+    if (!Number.isFinite(enable)) enable = SYNC_PRESETS.normal.enable;
+    target = Math.min(10, Math.max(1, target));
+    enable = Math.min(30, Math.max(2, enable));
+    // 시작 지연은 목표보다 최소 0.5초 커야 의미가 있다.
+    if (enable <= target) enable = Math.min(30, target + 0.5);
+    return { enable, target };
+  }
+
+  function applySyncPreset(key, custom) {
+    const isCustom = key === "custom";
+    const next = isCustom || SYNC_PRESETS[key] ? key : "normal";
+    const nextCfg = isCustom
+      ? normalizeSyncCustom(custom)
+      : { ...SYNC_PRESETS[next] };
+    // 키·값이 모두 그대로면 무시(커스텀은 값이 바뀔 수 있어 cfg까지 비교).
+    if (
+      next === syncPresetKey &&
+      nextCfg.enable === syncCfg.enable &&
+      nextCfg.target === syncCfg.target
+    )
+      return;
     syncPresetKey = next;
-    syncCfg = { ...SYNC_PRESETS[next] };
+    syncCfg = nextCfg;
     // 프리셋이 바뀌면 백오프도 초기화(새 기준으로 다시 판단).
     syncAutoCooldownMs = SYNC_AUTO_COOLDOWN_BASE_MS;
     updateSyncButtonState();

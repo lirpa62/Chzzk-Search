@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>치즈 서치 - 기능 설정</title>
+    <title>치즈 플래터 - 기능 설정</title>
     <script src="src/themeInit.js"></script>
     <link rel="stylesheet" href="src/popup.css" />
     <link rel="stylesheet" href="src/settings.css" />
@@ -13,7 +13,9 @@
       <header class="settings-header">
         <div class="settings-header-text">
           <h1>기능 설정</h1>
-          <p class="settings-subtitle">사용하지 않는 기능을 끄고 숨길 수 있어요.</p>
+          <p class="settings-subtitle">
+            사용하지 않는 기능을 끄고 숨길 수 있어요.
+          </p>
         </div>
         <button
           type="button"
@@ -30,7 +32,13 @@
             fill="none"
             aria-hidden="true"
           >
-            <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="2"></circle>
+            <circle
+              cx="12"
+              cy="12"
+              r="4"
+              stroke="currentColor"
+              stroke-width="2"
+            ></circle>
             <path
               d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
               stroke="currentColor"
@@ -61,151 +69,585 @@
         해제하면 기능까지 다시 켜집니다.
       </p>
 
-      <section class="settings-group" aria-label="플레이어 기능">
-        <h2 class="settings-group-title">플레이어</h2>
-        <ul class="settings-list">
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">오디오 믹서 숨김</span>
-              <span class="settings-item-desc">컴프레서·EQ·볼륨 보정 버튼</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="audioMixer" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">비디오 필터 숨김</span>
-              <span class="settings-item-desc">밝기·대비·선명도 등 화면 보정</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="videoFilter" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">실시간 따라잡기 숨김</span>
-              <span class="settings-item-desc">라이브 지연 따라잡기 버튼</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="liveSync" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">스트림 정보 숨김</span>
-              <span class="settings-item-desc">해상도·비트레이트·코덱 정보</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="streamStats" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">댓글 타임스탬프 숨김</span>
-              <span class="settings-item-desc">재생바 댓글 마커·목록</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="commentTimestamp" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">미리보기 실제 시각 숨김</span>
-              <span class="settings-item-desc">다시보기 탐색 미리보기의 방송 당시 시각</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="seekPreviewRealtime" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-        </ul>
-      </section>
+      <div class="settings-layout">
+        <nav class="settings-tabs" aria-label="설정 카테고리" role="tablist">
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="all"
+            role="tab"
+            aria-selected="true"
+          >
+            전체
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="player"
+            role="tab"
+            aria-selected="false"
+          >
+            플레이어
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="search"
+            role="tab"
+            aria-selected="false"
+          >
+            검색
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="layout"
+            role="tab"
+            aria-selected="false"
+          >
+            레이아웃
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="sidebar"
+            role="tab"
+            aria-selected="false"
+          >
+            사이드바
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="clip"
+            role="tab"
+            aria-selected="false"
+          >
+            클립
+          </button>
+        </nav>
 
-      <section class="settings-group" aria-label="실시간 따라잡기">
-        <h2 class="settings-group-title">실시간 따라잡기 민감도</h2>
-        <div class="settings-segmented" id="syncPreset" role="radiogroup">
-          <button type="button" data-sync-preset="low" role="radio" aria-checked="false">
-            낮음
-            <small>끊김 최소</small>
-          </button>
-          <button type="button" data-sync-preset="normal" role="radio" aria-checked="true">
-            보통
-            <small>기본</small>
-          </button>
-          <button type="button" data-sync-preset="high" role="radio" aria-checked="false">
-            높음
-            <small>바짝 따라감</small>
-          </button>
+        <div class="settings-panels">
+          <section
+            class="settings-group"
+            data-panel="player"
+            aria-label="플레이어 기능"
+          >
+            <h2 class="settings-group-title">플레이어</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">오디오 믹서 숨김</span>
+                  <span class="settings-item-desc"
+                    >컴프레서·EQ·볼륨 보정 버튼</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="audioMixer" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">비디오 필터 숨김</span>
+                  <span class="settings-item-desc"
+                    >밝기·대비·선명도 등 화면 보정</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="videoFilter" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">실시간 따라잡기 숨김</span>
+                  <span class="settings-item-desc"
+                    >라이브 지연 따라잡기 버튼</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="liveSync" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">스트림 정보 숨김</span>
+                  <span class="settings-item-desc"
+                    >해상도·비트레이트·코덱 정보</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="streamStats" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">댓글 타임스탬프 숨김</span>
+                  <span class="settings-item-desc">재생바 댓글 마커·목록</span>
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="commentTimestamp" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name"
+                    >미리보기 실제 시각 숨김</span
+                  >
+                  <span class="settings-item-desc"
+                    >다시보기 탐색 미리보기의 방송 당시 시각</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="seekPreviewRealtime" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="player"
+            aria-label="실시간 따라잡기"
+          >
+            <h2 class="settings-group-title">실시간 따라잡기 민감도</h2>
+            <div
+              class="settings-segmented settings-segmented-4"
+              id="syncPreset"
+              role="radiogroup"
+            >
+              <button
+                type="button"
+                data-sync-preset="low"
+                role="radio"
+                aria-checked="false"
+              >
+                낮음
+                <small>시작 5초<br />목표 3초</small>
+              </button>
+              <button
+                type="button"
+                data-sync-preset="normal"
+                role="radio"
+                aria-checked="true"
+              >
+                보통
+                <small>시작 3초<br />목표 2초</small>
+              </button>
+              <button
+                type="button"
+                data-sync-preset="high"
+                role="radio"
+                aria-checked="false"
+              >
+                높음
+                <small>시작 2초<br />목표 1.5초</small>
+              </button>
+              <button
+                type="button"
+                data-sync-preset="custom"
+                role="radio"
+                aria-checked="false"
+              >
+                커스텀
+                <small>직접 입력</small>
+              </button>
+            </div>
+            <div class="settings-custom-row" id="syncCustomRow" hidden>
+              <label class="settings-custom-field">
+                <span>시작 지연</span>
+                <span class="settings-custom-input">
+                  <input
+                    type="number"
+                    id="syncCustomEnable"
+                    min="2"
+                    max="30"
+                    step="0.5"
+                    inputmode="decimal"
+                  />
+                  <small>초</small>
+                </span>
+              </label>
+              <label class="settings-custom-field">
+                <span>목표 지연</span>
+                <span class="settings-custom-input">
+                  <input
+                    type="number"
+                    id="syncCustomTarget"
+                    min="1"
+                    max="10"
+                    step="0.5"
+                    inputmode="decimal"
+                  />
+                  <small>초</small>
+                </span>
+              </label>
+            </div>
+            <p class="settings-group-desc">
+              지연이 '시작' 값을 넘으면 자동으로 따라잡아 '목표' 값까지
+              줄입니다. 값이 작을수록 라이브에 바짝 붙지만 끊김이 잦을 수
+              있습니다. 커스텀은 시작 2~30초, 목표 1~10초(시작 &gt; 목표).
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="search"
+            aria-label="검색 기능"
+          >
+            <h2 class="settings-group-title">검색</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">다시보기 검색 숨김</span>
+                  <span class="settings-item-desc"
+                    >다시보기 목록 검색 화면</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="searchVideos" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">클립 검색 숨김</span>
+                  <span class="settings-item-desc">클립 목록 검색 화면</span>
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="searchClips" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="layout"
+            aria-label="레이아웃"
+          >
+            <h2 class="settings-group-title">레이아웃</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">사이드바 숨김</span>
+                  <span class="settings-item-desc"
+                    >왼쪽 채널/메뉴 사이드바 전체</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="sidebar" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">스튜디오 버튼 숨김</span>
+                  <span class="settings-item-desc"
+                    >헤더 우측 '스튜디오' 버튼</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="headerStudio" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="layout"
+            aria-label="헤더 바로가기"
+          >
+            <h2 class="settings-group-title">
+              헤더 바로가기 (사이드바 숨김 시)
+            </h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label><span class="settings-item-name">전체 방송</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-header-nav="hdrLives" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">인기 클립</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-header-nav="hdrClips" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">카테고리</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-header-nav="hdrCategory" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">편성표</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-header-nav="hdrSchedule" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">팔로잉</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-header-nav="hdrFollowing" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">치즈팜</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-header-nav="hdrCheezefarm" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+            </ul>
+            <p class="settings-group-desc">
+              사이드바를 숨기면 선택한 항목을 헤더에 아이콘으로 표시해 바로
+              이동할 수 있습니다. 체크하면 표시됩니다.
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="sidebar"
+            aria-label="사이드바 항목"
+          >
+            <h2 class="settings-group-title">사이드바 항목별 숨김</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label><span class="settings-item-name">전체 방송</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbLives" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">인기 클립</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbClips" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">카테고리</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbCategory" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">편성표</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbSchedule" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">팔로잉</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbFollowing" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">치즈팜</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbCheezefarm" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label
+                  ><span class="settings-item-name">팔로우 목록</span></label
+                >
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbFollow" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">팔로잉 오프라인 숨김</span>
+                  <span class="settings-item-desc"
+                    >방송 중이 아닌 팔로우 채널 가리기</span
+                  >
+                </label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbFollowOffline" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label
+                  ><span class="settings-item-name">인기 카테고리</span></label
+                >
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbPopularCategory" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">방송 일정</span></label>
+                <label class="settings-switch"
+                  ><input
+                    type="checkbox"
+                    data-feature="sbBroadcastSchedule" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label><span class="settings-item-name">파트너</span></label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbPartner" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">서비스 바로가기</span>
+                  <span class="settings-item-desc"
+                    >게임·e스포츠·오리지널·PC게임·라운지</span
+                  >
+                </label>
+                <label class="settings-switch"
+                  ><input type="checkbox" data-feature="sbServices" /><i
+                    aria-hidden="true"
+                  ></i
+                ></label>
+              </li>
+            </ul>
+            <p class="settings-group-desc">
+              '사이드바 숨김'이 켜져 있으면 사이드바 전체가 가려져 항목별 설정은
+              적용되지 않습니다.
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="sidebar"
+            aria-label="팔로우 채널 갱신"
+          >
+            <h2 class="settings-group-title">팔로우 채널 자동 갱신</h2>
+            <div
+              class="settings-segmented settings-segmented-4"
+              id="followRefresh"
+              role="radiogroup"
+            >
+              <button
+                type="button"
+                data-follow-refresh="0"
+                role="radio"
+                aria-checked="true"
+              >
+                끔
+              </button>
+              <button
+                type="button"
+                data-follow-refresh="30"
+                role="radio"
+                aria-checked="false"
+              >
+                30초
+              </button>
+              <button
+                type="button"
+                data-follow-refresh="60"
+                role="radio"
+                aria-checked="false"
+              >
+                60초
+              </button>
+              <button
+                type="button"
+                data-follow-refresh="custom"
+                role="radio"
+                aria-checked="false"
+              >
+                커스텀
+              </button>
+            </div>
+            <div class="settings-custom-row" id="followCustomRow" hidden>
+              <label class="settings-custom-field">
+                <span>갱신 주기</span>
+                <span class="settings-custom-input">
+                  <input
+                    type="number"
+                    id="followCustomSec"
+                    min="3"
+                    max="600"
+                    step="1"
+                    inputmode="numeric"
+                  />
+                  <small>초</small>
+                </span>
+              </label>
+            </div>
+            <p class="settings-group-desc">
+              사이드바가 펼쳐진 상태에서 팔로우 채널 목록을 주기적으로
+              새로고침해 라이브 상태를 갱신합니다(접힘 상태에선 동작하지
+              않습니다). 커스텀은 3~600초이며, 10초 이하로 설정하면 호출 제한을
+              피해 설정값과 설정값~10초 랜덤을 번갈아 호출합니다.
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="clip"
+            aria-label="클립 기능"
+          >
+            <h2 class="settings-group-title">클립</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name"
+                    >'클릭하여 라이브 시청' 숨김</span
+                  >
+                  <span class="settings-item-desc"
+                    >클립 재생 중 라이브 이동 버튼</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input
+                    type="checkbox"
+                    data-feature="clipLiveButton"
+                    checked
+                  />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
+          </section>
         </div>
-        <p class="settings-group-desc">
-          따라잡기를 시작하는 지연과 목표 지연을 정합니다. '높음'은 라이브에 가깝게
-          유지하지만 끊김이 잦을 수 있고, '낮음'은 느슨해 끊김이 적습니다.
-        </p>
-      </section>
-
-      <section class="settings-group" aria-label="검색 기능">
-        <h2 class="settings-group-title">검색</h2>
-        <ul class="settings-list">
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">다시보기 검색 숨김</span>
-              <span class="settings-item-desc">다시보기 목록 검색 화면</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="searchVideos" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">클립 검색 숨김</span>
-              <span class="settings-item-desc">클립 목록 검색 화면</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="searchClips" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-        </ul>
-      </section>
-
-      <section class="settings-group" aria-label="레이아웃">
-        <h2 class="settings-group-title">레이아웃</h2>
-        <ul class="settings-list">
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">사이드바 숨김</span>
-              <span class="settings-item-desc">왼쪽 채널/메뉴 사이드바</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="sidebar" />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-        </ul>
-      </section>
-
-      <section class="settings-group" aria-label="클립 기능">
-        <h2 class="settings-group-title">클립</h2>
-        <ul class="settings-list">
-          <li class="settings-item">
-            <label>
-              <span class="settings-item-name">'클릭하여 라이브 시청' 숨김</span>
-              <span class="settings-item-desc">클립 재생 중 라이브 이동 버튼</span>
-            </label>
-            <label class="settings-switch">
-              <input type="checkbox" data-feature="clipLiveButton" checked />
-              <i aria-hidden="true"></i>
-            </label>
-          </li>
-        </ul>
-      </section>
+      </div>
     </main>
     <script src="src/settings.js"></script>
   </body>
