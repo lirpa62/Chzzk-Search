@@ -16,17 +16,24 @@
     streamStats: false,
     liveSync: false,
   };
+  // '항상 켜기'(전역) + 첫 사용자 제스처 감지. 제스처 전엔 자동 활성화하지 않는다
+  // (AudioContext 자동재생 정책 + 타 확장과의 source 선점 경쟁 회피).
+  let mixerAlwaysOn = false;
+  let userGestureSeen = false;
   window.addEventListener("message", (e) => {
     if (e.source !== window || e.data?.source !== "cheese-feature-flags") return;
     const f = e.data.flags || {};
     featureFlags.audioMixer = f.audioMixer === true;
     featureFlags.streamStats = f.streamStats === true;
     featureFlags.liveSync = f.liveSync === true;
+    // 오디오 믹서 '항상 켜기'(전역). 켜져 있으면 첫 사용자 제스처 이후 자동 활성화.
+    mixerAlwaysOn = e.data.mixerAlwaysOn === true;
     // 따라잡기 민감도 프리셋(낮음/보통/높음/커스텀). content.js가 chrome.storage에서
     // 읽어 전달. custom이면 syncCustom={enable,target}을 함께 받는다.
     if (typeof applySyncPreset === "function")
       applySyncPreset(e.data.syncPreset, e.data.syncCustom);
     if (typeof tick === "function") tick();
+    if (typeof maybeAutoEnableMixer === "function") maybeAutoEnableMixer();
   });
   // 로드 직후 현재 플래그를 요청한다(content.js의 초기 송신을 놓쳤을 수 있으므로).
   window.postMessage(
@@ -40,6 +47,9 @@
   const STATS_PANEL_ID = "cheese-stream-stats-panel";
   const STATS_BUTTON_CLASS = "cheese-stream-stats-button";
   const STATS_REFRESH_MS = 1000;
+  // 음량 슬라이더 조절 시 현재 % 값을 보여주는 툴팁.
+  const VOLUME_TOOLTIP_CLASS = "cheese-volume-tooltip";
+  const VOLUME_TOOLTIP_HIDE_MS = 700; // 조작 멈춘 뒤 이 시간 후 숨김
   // 라이브 싱크 따라잡기 관련
   const SYNC_BUTTON_CLASS = "cheese-live-sync-button";
   const SYNC_MENU_ID = "cheese-live-sync-menu";
@@ -340,6 +350,8 @@
 
   const DEFAULT_STATE = () => ({
     enabled: false,
+    // 사용자가 이 채널에서 믹서를 직접 끔 → '항상 켜기' 자동 활성화 제외(opt-out).
+    userDisabled: false,
     preset: "default",
     gain: 1,
     eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -369,6 +381,10 @@
   let state = DEFAULT_STATE();
   let currentPageKey = null; // 현재 페이지 raw 키(live:<id>|video:<no>)
   let currentMediaId = null; // 해석된 채널id(설정 저장/복원 키)
+  // 현재 미디어의 저장 설정(프리셋 등) 로드 완료 여부. '항상 켜기' 자동 활성화는
+  // 이게 true일 때만 시도해, 저장된 프리셋이 적용되기 전에 기본 프리셋으로 켜지는
+  // 레이스를 막는다.
+  let stateLoaded = false;
   let activeTab = "presets";
   let customDraft = null;
   // 커스텀 추가/편집 드래프트 진입 직전의 믹서 상태(취소 시 복원용).
@@ -710,6 +726,22 @@
   // 실패하면 setEnabled가 enabled를 다시 false로 되돌린다.
   function ensureMixerEnabled() {
     if (state.enabled && audio.connected) return;
+    setEnabled(true);
+  }
+
+  // '항상 켜기'가 켜져 있고 첫 사용자 제스처가 있었으면 믹서를 자동 활성화한다.
+  // 충돌(graphConflict)/믹서 숨김(featureFlags.audioMixer)/이미 켜짐/video 미준비
+  // 시엔 시도하지 않는다. 충돌이면 setEnabled→buildGraph 실패가 graphConflict를
+  // 세워 재시도가 멈추므로 무한 루프가 되지 않는다.
+  function maybeAutoEnableMixer() {
+    if (!mixerAlwaysOn) return;
+    if (!userGestureSeen) return; // 제스처 전엔 대기
+    if (!stateLoaded) return; // 저장 프리셋 로드 전엔 대기(기본 프리셋 오활성 방지)
+    if (state.userDisabled) return; // 이 채널은 사용자가 직접 끔(opt-out)
+    if (featureFlags.audioMixer) return; // 믹서 기능 숨김 상태면 자동 활성 안 함
+    if (graphConflict) return; // 이미 충돌 판정 → 재시도 금지
+    if (state.enabled && audio.connected) return; // 이미 동작 중
+    if (!isElementRendered(findVideo())) return; // video 준비 전이면 다음 기회
     setEnabled(true);
   }
 
@@ -1378,6 +1410,7 @@
   function serializeState() {
     return {
       enabled: state.enabled,
+      userDisabled: state.userDisabled === true,
       preset: state.preset,
       gain: state.gain,
       eq: [...state.eq],
@@ -1412,10 +1445,20 @@
           },
           customPresets: normalizeCustomPresets(saved.customPresets),
         };
+        // userDisabled 채널인데 로드 전 자동 활성화가 먼저 켰을 수 있다(레이스).
+        // 저장된 의사를 존중해 확실히 끈다.
+        if (state.userDisabled && audio.connected) {
+          state.enabled = false;
+          teardownGraph();
+        }
         if (state.enabled) ensureEnabledGraph();
         else applyState();
         syncUI();
       }
+      // 저장 설정 로드 완료 → 이제부터 '항상 켜기' 자동 활성화 허용(저장된 프리셋이
+      // 이미 state에 반영돼 있으므로 자동으로 켜도 그 프리셋이 적용된다).
+      stateLoaded = true;
+      maybeAutoEnableMixer();
     }
   });
 
@@ -1462,10 +1505,14 @@
   // 버튼 + 슬라이더를 native 볼륨 컨트롤(.pzp-pc__volume-control)로 감싼다.
   // 이렇게 하면 치지직 native CSS가 그대로 적용돼 버튼 옆에 가로 슬라이더가
   // 펼쳐진다. 별도 CSS 불필요.
+  // 게인 툴팁은 슬라이더가 아니라 래퍼(.cheese-audio-mixer-control) 직속에 둔다 —
+  // 슬라이더 안에 두면 믹서 버튼 native 툴팁이 뜰 때 슬라이더가 밀려 함께 출렁였다.
+  // 래퍼는 하단 바 flex 아이템이라 세로 위치가 안정적이다(음량 툴팁과 동일 전략).
   function createButtonControl() {
     const wrap = document.createElement("div");
     wrap.className = `${CONTROL_CLASS} pzp-pc__volume-control`;
-    wrap.innerHTML = `<button class="${BUTTON_CLASS} pzp-pc__volume-button pzp-button pzp-pc-ui-button" type="button" aria-label="오디오 믹서" aria-expanded="false"><span class="pzp-button__tooltip pzp-button__tooltip--top">오디오 믹서</span><span class="pzp-ui-icon">${mixerIcon()}</span><span class="pzp-button__label">오디오 믹서</span></button>${gainSliderMarkup()}`;
+    const gainPct = Math.round(state.gain * 100);
+    wrap.innerHTML = `<button class="${BUTTON_CLASS} pzp-pc__volume-button pzp-button pzp-pc-ui-button" type="button" aria-label="오디오 믹서" aria-expanded="false"><span class="pzp-button__tooltip pzp-button__tooltip--top">오디오 믹서</span><span class="pzp-ui-icon">${mixerIcon()}</span><span class="pzp-button__label">오디오 믹서</span></button>${gainSliderMarkup()}<span class="${VOLUME_TOOLTIP_CLASS} cheese-gain-tooltip" data-gain-tooltip>${gainPct}%</span>`;
     return wrap;
   }
 
@@ -2212,6 +2259,9 @@
         return;
       }
       if (t.dataset.action === "power") {
+        // 사용자가 직접 끄면 이 채널은 '항상 켜기' 자동 활성화에서 제외(opt-out).
+        // 다시 켜면 해제. per-channel로 저장돼 새로고침 후에도 의사 유지.
+        state.userDisabled = !t.checked;
         setEnabled(t.checked);
       } else if (t.dataset.action === "comp-toggle") {
         state.comp.enabled = t.checked;
@@ -2663,7 +2713,42 @@
     const handle = slider.querySelector(".pzp-ui-slider__handler-wrap");
     if (handle) handle.style.left = `${Math.round(n * 1000) / 10}%`;
     slider.setAttribute("aria-valuenow", String(Math.round(n * 100)));
+    // 게인 툴팁은 실제 게인(0.5~2.0)을 %로 표시(100%=원본). 텍스트만 갱신.
+    // 툴팁은 슬라이더 형제(래퍼 직속)이므로 래퍼에서 찾는다.
+    const tip = gainTooltipOf(slider);
+    if (tip) {
+      const next = `${Math.round(state.gain * 100)}%`;
+      if (tip.textContent !== next) tip.textContent = next;
+    }
   }
+  // 게인 슬라이더 툴팁 표시 제어. 음량 슬라이더와 동일 동작: 호버 중엔 계속 표시,
+  // 벗어나면 잠시 뒤 숨김. 이미 보이는 중엔 is-visible을 다시 안 붙여 떨림 방지.
+  let gainTooltipHideTimer = 0;
+  let gainTooltipHovering = false;
+  function gainTooltipOf(slider) {
+    // 툴팁은 슬라이더 형제(래퍼 .cheese-audio-mixer-control 직속)에 있다.
+    const wrap = slider?.closest?.(`.${CONTROL_CLASS}`);
+    return wrap?.querySelector?.("[data-gain-tooltip]") || null;
+  }
+  function showGainTooltip(slider) {
+    const tip = gainTooltipOf(slider);
+    if (!tip) return;
+    updateGainSliderVisual(slider); // 텍스트 최신화
+    if (!tip.classList.contains("is-visible")) tip.classList.add("is-visible");
+    scheduleGainTooltipHide(tip);
+  }
+  function scheduleGainTooltipHide(tip) {
+    if (gainTooltipHideTimer) {
+      clearTimeout(gainTooltipHideTimer);
+      gainTooltipHideTimer = 0;
+    }
+    if (gainTooltipHovering || gainDragging) return; // 호버/드래그 중엔 유지
+    gainTooltipHideTimer = setTimeout(() => {
+      tip.classList.remove("is-visible");
+      gainTooltipHideTimer = 0;
+    }, VOLUME_TOOLTIP_HIDE_MS);
+  }
+
   document.addEventListener("pointerdown", (e) => {
     const slider = e.target.closest?.("[data-master-gain]");
     if (!slider) return;
@@ -2672,17 +2757,45 @@
     gainDragging = true;
     gainDragTarget = slider;
     applyGainFromPointer(slider, e.clientX);
+    showGainTooltip(slider);
   });
   document.addEventListener("pointermove", (e) => {
     if (!gainDragging || !gainDragTarget) return;
     applyGainFromPointer(gainDragTarget, e.clientX);
+    showGainTooltip(gainDragTarget);
   });
   document.addEventListener("pointerup", () => {
+    const target = gainDragTarget;
     gainDragging = false;
     gainDragTarget = null;
+    // 드래그 끝나면 호버 아닐 때 숨김 예약.
+    const tip = gainTooltipOf(target);
+    if (tip) scheduleGainTooltipHide(tip);
+  });
+  // 호버 표시(delegation: 슬라이더가 버튼과 함께 재생성돼도 동작).
+  document.addEventListener("mouseover", (e) => {
+    const slider = e.target.closest?.("[data-master-gain]");
+    if (!slider) return;
+    gainTooltipHovering = true;
+    showGainTooltip(slider);
+  });
+  document.addEventListener("mouseout", (e) => {
+    const slider = e.target.closest?.("[data-master-gain]");
+    if (!slider) return;
+    // 슬라이더 내부 요소 간 이동은 무시(관련 타깃이 여전히 슬라이더 안).
+    if (slider.contains(e.relatedTarget)) return;
+    gainTooltipHovering = false;
+    const tip = gainTooltipOf(slider);
+    if (tip) scheduleGainTooltipHide(tip);
   });
 
   function handleUserGestureForAudioContext() {
+    // 첫 제스처 기록 → '항상 켜기' 자동 활성화 조건 충족. 다음 틱에 시도(현재
+    // 이벤트 디스패치를 막지 않도록 setTimeout 0).
+    if (!userGestureSeen) {
+      userGestureSeen = true;
+      window.setTimeout(() => maybeAutoEnableMixer(), 0);
+    }
     if (!state.enabled || audio.connected) return;
     window.setTimeout(() => ensureEnabledGraph(), 0);
   }
@@ -3759,6 +3872,114 @@
   }
 
   // ── 부트스트랩 ────────────────────────────────────────────────────────────
+  // ── 음량 슬라이더 % 툴팁 ───────────────────────────────────────────────────
+  // 치지직 native 볼륨 슬라이더에 현재 음량 %를 보여주는 툴팁을 얹는다. 슬라이더의
+  // aria-valuenow가 드래그 중 갱신되므로 그 값을 읽어 표시한다(믹서 on/off 무관, 항상).
+  let volumeTooltipHideTimer = 0;
+
+  function findNativeVolumeSlider() {
+    const player = findPlayer();
+    if (!player) return null;
+    // 우리 마스터 게인 슬라이더(data-master-gain)는 제외하고 native만 찾는다.
+    const sliders = player.querySelectorAll(".pzp-pc__volume-slider");
+    for (const s of sliders) {
+      if (s.hasAttribute("data-master-gain")) continue;
+      if (s.closest(`.${CONTROL_CLASS}`)) continue;
+      return s;
+    }
+    return null;
+  }
+
+  function volumePercentOf(slider) {
+    const now = Number(slider.getAttribute("aria-valuenow"));
+    if (Number.isFinite(now)) return Math.round(now);
+    // 폴백: progress scale에서 계산.
+    const prog = slider.querySelector(".pzp-ui-progress__volume");
+    const scale = Number(
+      getComputedStyle(prog || slider).getPropertyValue(
+        "--pzp-ui-progress__scale",
+      ),
+    );
+    return Number.isFinite(scale) ? Math.round(scale * 100) : 0;
+  }
+
+  let volumeTooltipHovering = false; // 마우스가 슬라이더 위에 있는지
+
+  // 텍스트만 갱신(표시 상태/transition은 건드리지 않음 → 떨림 방지).
+  function setVolumeTooltipText(slider, tip) {
+    const next = `${volumePercentOf(slider)}%`;
+    if (tip.textContent !== next) tip.textContent = next;
+  }
+
+  // 툴팁을 띄운다. 이미 보이는 중이면 is-visible을 다시 붙이지 않아 transform
+  // transition이 재시작되지 않는다(위아래 떨림의 원인 제거).
+  function showVolumeTooltip(slider, tip) {
+    setVolumeTooltipText(slider, tip);
+    if (!tip.classList.contains("is-visible")) tip.classList.add("is-visible");
+    scheduleVolumeTooltipHide(tip);
+  }
+
+  // 호버 중이 아닐 때만 자동 숨김 타이머를 건다. 호버 중이면 계속 표시.
+  function scheduleVolumeTooltipHide(tip) {
+    if (volumeTooltipHideTimer) {
+      clearTimeout(volumeTooltipHideTimer);
+      volumeTooltipHideTimer = 0;
+    }
+    if (volumeTooltipHovering) return; // 호버 중엔 숨기지 않음
+    volumeTooltipHideTimer = setTimeout(() => {
+      tip.classList.remove("is-visible");
+      volumeTooltipHideTimer = 0;
+    }, VOLUME_TOOLTIP_HIDE_MS);
+  }
+
+  function ensureVolumeTooltip() {
+    const slider = findNativeVolumeSlider();
+    if (!slider) return;
+    // 이미 부착돼 있으면 재부착하지 않는다(멱등).
+    if (slider.dataset.cheeseVolTip === "1") return;
+    slider.dataset.cheeseVolTip = "1";
+
+    const tip = document.createElement("span");
+    tip.className = VOLUME_TOOLTIP_CLASS;
+    // 슬라이더가 아니라 '볼륨 컨트롤 래퍼(.pzp-pc__volume-control)'에 절대배치한다.
+    // 음소거 버튼 native 툴팁이 뜨면 형제인 슬라이더가 잠깐 위로 밀려, 슬라이더
+    // 기준으로 두면 우리 툴팁도 함께 출렁였다(요청 버그). 래퍼는 하단 버튼 바의
+    // flex 아이템이라 세로 위치가 안정적이므로 기준을 래퍼로 옮겨 영향을 끊는다.
+    const anchor = slider.closest(".pzp-pc__volume-control") || slider;
+    if (getComputedStyle(anchor).position === "static") {
+      anchor.style.position = "relative";
+    }
+    anchor.appendChild(tip);
+
+    // 호버 동안엔 계속 표시. mouseenter로 켜고 mouseleave로 끈다.
+    slider.addEventListener("mouseenter", () => {
+      volumeTooltipHovering = true;
+      showVolumeTooltip(slider, tip);
+    });
+    slider.addEventListener("mouseleave", () => {
+      volumeTooltipHovering = false;
+      scheduleVolumeTooltipHide(tip); // 벗어나면 그때 숨김 예약
+    });
+    // 드래그 중엔 텍스트만 갱신(표시 토글 안 함 → 떨림 없음).
+    slider.addEventListener("pointerdown", () => showVolumeTooltip(slider, tip));
+    slider.addEventListener("pointermove", (e) => {
+      if (e.buttons) setVolumeTooltipText(slider, tip);
+    });
+    // 키보드/휠 조작은 호버 아닐 수도 있으니 표시 + (호버 아니면)숨김 예약.
+    slider.addEventListener("keydown", () => showVolumeTooltip(slider, tip));
+    slider.addEventListener("wheel", () => showVolumeTooltip(slider, tip), {
+      passive: true,
+    });
+    // aria-valuenow가 바뀌는 동안(=조작 중) 텍스트만 라이브 갱신.
+    const obs = new MutationObserver(() => {
+      if (tip.classList.contains("is-visible")) setVolumeTooltipText(slider, tip);
+    });
+    obs.observe(slider, {
+      attributes: true,
+      attributeFilter: ["aria-valuenow"],
+    });
+  }
+
   function tick() {
     const pageKey = getPageKey();
     if (!pageKey) {
@@ -3781,6 +4002,7 @@
       currentPageKey = pageKey;
       currentMediaId = null; // 채널id는 아래에서 비동기로 해석
       pendingUserEdit = false;
+      stateLoaded = false; // 새 미디어 → 저장 설정 로드 전(자동 활성화 대기)
       state = DEFAULT_STATE();
       customDraft = null;
       draftBackup = null; // 미디어 전환 → 이전 드래프트 복원 대상 무효
@@ -3792,6 +4014,7 @@
       armFreshLiveEntry();
       audio.source = null; // 미디어 전환 시 새 video
       audio.video = null;
+      graphConflict = false; // 충돌은 video별 조건 → 새 영상에선 다시 시도 가능
       clearGraphRetryBlock();
       resolveAndLoadChannel(pageKey);
     }
@@ -3816,6 +4039,11 @@
     } else {
       ensureSyncButton();
     }
+    // 음량 % 툴팁은 믹서 on/off와 무관하게 항상 부착(기본 볼륨 조작 보조).
+    ensureVolumeTooltip();
+    // '항상 켜기' 자동 활성화(첫 제스처 이후, 미디어 준비되면). 미디어 전환 시
+    // graphConflict는 tick의 페이지 전환 분기에서 초기화되므로 새 영상엔 다시 시도.
+    maybeAutoEnableMixer();
   }
 
   // 페이지의 채널id를 비동기로 확보한 뒤 해당 채널 설정을 로드한다. 해석 도중
@@ -3823,14 +4051,22 @@
   async function resolveAndLoadChannel(pageKey) {
     const channelId = await resolveChannelId(pageKey);
     if (currentPageKey !== pageKey) return; // 그새 페이지가 바뀜
-    if (!channelId) return; // 채널id 확보 실패 — 기본 설정으로 동작
+    if (!channelId) {
+      // 채널id 확보 실패 — 기본 설정으로 동작. 로드할 게 없으니 자동 활성화 허용.
+      stateLoaded = true;
+      maybeAutoEnableMixer();
+      return;
+    }
     currentMediaId = channelId;
     if (pendingUserEdit) {
       // 채널id 확보 전 사용자가 바꾼 설정이 있으면 로드 대신 저장한다(덮어쓰기 방지).
+      // 이미 현재 state가 사용자 의도 → 자동 활성화 허용.
       pendingUserEdit = false;
       saveState();
+      stateLoaded = true;
+      maybeAutoEnableMixer();
     } else {
-      requestState(channelId);
+      requestState(channelId); // loaded 수신 시 stateLoaded=true
     }
   }
 

@@ -69,6 +69,9 @@ const SYNC_PRESET_KEY = "cheeseSyncPreset";
 const SYNC_CUSTOM_KEY = "cheeseSyncCustom"; // {enable,target} (preset=custom일 때)
 let syncPresetValue = "normal";
 let syncCustomValue = null; // {enable, target} 또는 null
+// 오디오 믹서 '항상 켜기'(전역). MAIN world(audioMixer)에 함께 전달.
+const MIXER_ALWAYS_ON_KEY = "cheeseMixerAlwaysOn";
+let mixerAlwaysOn = false;
 const featureFlags = {
   audioMixer: false,
   videoFilter: false,
@@ -79,6 +82,8 @@ const featureFlags = {
   searchClips: false,
   sidebar: false,
   headerStudio: false, // 헤더의 '스튜디오' 버튼 숨김
+  headerTopicTabs: false, // 헤더의 주제 탭(게임/e스포츠/스포츠/엔터+) 숨김
+  headerAutoHide: false, // 헤더 자동 숨김(상단 호버 시 슬라이드 표시)
   seekPreviewRealtime: false, // 다시보기 seek preview 실제 시각 병기 숨김
   // 사이드바 메뉴 항목별 숨김(첫 nav 섹션의 개별 메뉴)
   sbLives: false, // 전체 방송
@@ -6281,6 +6286,7 @@ function applyFeatureFlags(value) {
   // MAIN world 스크립트(오디오믹서/비디오필터)에 전달.
   broadcastFeatureFlags();
   applySidebarHidden();
+  applyHeaderAutoHide();
   // seek preview 병기 토글 즉시 반영(이미 떠 있는 preview에 추가/제거).
   updateSeekPreviewRealtime();
   // 격리 월드 기능 즉시 반영(검색 게이트 + 댓글 타임스탬프; init이 후자도 호출).
@@ -6337,9 +6343,272 @@ header#header :has(> form[role="search"])::before { width: 0 !important; }`,
       `header#header [class*="_box_"]:has(> a[href*="studio.chzzk.naver.com"]) { padding-right: 0 !important; }`,
     );
   }
+  // 헤더 주제 탭(게임/e스포츠/스포츠/엔터+) 숨김 — 컨테이너는 그대로 두고(그 margin
+  // auto가 우측 컨트롤을 오른쪽으로 밀어내는 역할을 하므로 제거하면 레이아웃이 무너짐)
+  // 내부 nav와 이벤트 배너만 숨긴다. nav 옆 형제(_banner_ 등)도 함께 가린다.
+  if (featureFlags.headerTopicTabs) {
+    rules.push(
+      `header#header :has(> nav[aria-label="주제 탭"]) > * { display: none !important; }`,
+    );
+  }
+  // 헤더 자동 숨김 — 평소엔 헤더를 흐름에서 빼서(position:absolute) 그 60px 높이를
+  // 아래 콘텐츠가 회수하게 하고, 위로 밀어 올려(translateY -100%) 화면 밖으로 숨긴다.
+  // JS가 상단 호버존 감지 시 cheese-header-peek를 붙이면 sticky로 복귀해 다시 60px를
+  // 차지하며 슬라이드로 나타난다. 사이드바(fixed)는 흐름과 무관해 그대로 상단 공간 사용.
+  // transition으로 슬라이드 + 콘텐츠 자리 이동을 부드럽게. !important로 치지직 sticky를 이김.
+  if (featureFlags.headerAutoHide) {
+    // ── 오버레이 방식 ──────────────────────────────────────────────────────
+    // peek(헤더 표시/숨김)할 때 콘텐츠/사이드바를 밀지 않는다 → 레이아웃 변화 0
+    // → CLS/버벅임 없음. 헤더는 fixed 오버레이로 콘텐츠 '위에' 떠서 나타났다 사라진다.
+    // 콘텐츠/사이드바의 상단 60px 회수는 자동숨김이 켜진 동안 '항상'(peek 무관) 고정
+    // 적용하므로 호버 토글 시 reflow가 없다(1회성 레이아웃만).
+    rules.push(
+      // 헤더: 위치는 top으로만(치지직 인라인 transform은 none으로 무력화). 숨김은
+      // 화면 위로(-60-offset), peek는 배너 아래(offset). top만 transition → 가벼움.
+      `header#header {
+  position: fixed !important;
+  top: calc(-60px - var(--cheese-header-offset, 0px)) !important;
+  left: 0 !important;
+  right: 0 !important;
+  transform: none !important;
+  transition: top 0.2s ease !important;
+  will-change: top;
+  z-index: 10000 !important;
+}`,
+      `header#header.cheese-header-peek {
+  top: var(--cheese-header-offset, 0px) !important;
+}`,
+      // 콘텐츠 섹션: 헤더가 빠진 60px를 회수해 항상 100vh(peek 무관). PIP 제외.
+      `body:has(header#header) div#layout-body > section:not([class*="_type_pip_"]) {
+  height: 100vh !important;
+}`,
+      // 사이드바: 헤더가 빠졌으니 배너 아래(offset)부터 항상 시작(peek 무관).
+      // 치지직 인라인 translateY(60px)는 무력화. transition 없음(토글 시 안 움직임).
+      `aside#sidebar {
+  transform: translateY(var(--cheese-header-offset, 0px)) !important;
+}`,
+      // 콘텐츠 내 sticky 요소(탭/필터/패널헤더)는 인라인 top에 헤더 높이(60px)가
+      // 미리 더해진 값(예: 채널 탭 110px·패널헤더 153px, lives 탭 111px·필터 154px)을
+      // 갖는다. 헤더가 빠진 만큼 위로 당겨야 같은 시각 위치가 된다. 인라인 top은 CSS로
+      // 못 줄이므로 transform:translateY로 시각 보정.
+      // **연속 보정**: 클래스로 0↔-60px를 이산 전환하면 sticky 고정 순간 갑자기 점프
+      // 한다. 대신 스크롤량에 비례한 --cheese-sticky-shift(JS가 -min(60,scrollTop)px로
+      // 갱신)로 0→-60px를 매끄럽게 따라가게 한다(치지직처럼 헤더·탭이 같이 올라가다
+      // sticky 고정). 대상은 인라인 top 보유(style*="top") _tab_/_filter_/_header_.
+      `div#layout-body [class*="_tab_"][style*="top"],
+div#layout-body [class*="_filter_"][style*="top"],
+div#layout-body [class*="_header_"][style*="top"] {
+  transform: translateY(var(--cheese-sticky-shift, 0px)) !important;
+}`,
+      // lives/videos 페이지 헤더(section 직계 _header_)는 인라인 top 대신 CSS
+      // padding-top:30px으로 헤더 아래 여백을 둔다 → 헤더 자동 숨김 시 빈 공간으로
+      // 남으므로 0으로 회수. 단 **배너 없을 때만**(body에 cheese-has-banner 없을 때):
+      // 배너가 있으면 헤더가 배너 아래 그대로라 이 여백이 필요하다. 셀렉터는 section
+      // 직계 _header_로 한정해 콘텐츠 내 다른 _header_ 오염을 막는다.
+      `body:not(.cheese-has-banner) div#layout-body section[class*="_section_"] > [class*="_header_"]:not([style*="top"]) {
+  padding-top: 0 !important;
+}`,
+    );
+    // 좌측 패딩(78→80px)은 사이드바가 보일 때만(사이드바 숨김이면 위 분기가 0 회수).
+    if (!featureFlags.sidebar) {
+      rules.push(`div#layout-body { padding-left: 80px !important; }`);
+    }
+  }
   const css = rules.join("\n");
   if (style.textContent !== css) style.textContent = css;
   applySidebarSections();
+}
+
+// ── 헤더 자동 숨김(상단 호버존에서 슬라이드 표시) ───────────────────────────
+// CSS는 applySidebarHidden이 처리(평소 숨김 + .cheese-header-peek 시 표시). 여기선
+// 마우스 위치를 보고 peek 클래스를 토글하는 리스너를 켜고 끈다.
+const HEADER_PEEK_CLASS = "cheese-header-peek";
+const HEADER_PEEK_ZONE_PX = 8; // 화면 상단 이 px 안에 마우스가 오면 표시
+const HEADER_PEEK_HYSTERESIS_PX = 24; // 헤더 아래 이만큼 더 내려가야 숨김(경계 진동 방지)
+let headerAutoHideOn = false;
+let headerPeekPinned = false; // 헤더 위 호버/포커스 중이면 계속 표시
+let headerAutoHideBoundEl = null; // 현재 헤더 리스너가 걸린 header 요소
+let headerPeekShown = false; // 현재 peek(표시) 상태 — 멱등 토글용 캐시
+
+// 치지직 인라인 transform(translateY(NNpx))의 NN을 읽는다. 메인의 51px 배너처럼
+// 헤더를 아래로 미는 정상 오프셋. 값이 없거나 0이면 0(라이브/다시보기 등 배너 없음).
+function readHeaderInlineOffsetPx(header) {
+  const t = header?.style?.transform || "";
+  const m = t.match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/);
+  const v = m ? parseFloat(m[1]) : 0;
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
+// 오프셋을 CSS 변수(--cheese-header-offset)에 반영. **:root에 둔다** — 헤더 top뿐
+// 아니라 layout-body padding-top/섹션 height도 이 변수를 쓰는데, 헤더는 그들의
+// 조상이 아니라 헤더에만 두면 상속이 안 닿는다(:root는 모두의 조상). 멱등.
+function updateHeaderOffsetVar(header) {
+  if (!header) return;
+  const px = readHeaderInlineOffsetPx(header);
+  const next = `${px}px`;
+  const root = document.documentElement;
+  if (root.style.getPropertyValue("--cheese-header-offset") !== next) {
+    root.style.setProperty("--cheese-header-offset", next);
+  }
+  // 배너 유무 마커(px>0=배너 있음). 헤더 padding-top 회수는 배너 없을 때만 적용.
+  const hasBanner = px > 0;
+  if (document.body.classList.contains("cheese-has-banner") !== hasBanner) {
+    document.body.classList.toggle("cheese-has-banner", hasBanner);
+  }
+}
+
+// 멱등: 상태가 실제로 바뀔 때만 클래스를 토글한다. mousemove가 초당 수십~수백 번
+// 호출되므로, 매번 classList.toggle을 하면 :has() 레이아웃 재계산(padding/100vh)이
+// 반복돼 페이지가 멈춘다(자가 발화/스래싱). 변화 있을 때만 DOM을 건드린다.
+function setHeaderPeek(show) {
+  show = Boolean(show);
+  const header = document.getElementById("header");
+  if (!header) return;
+  // 표시로 전환할 땐 현재 배너 오프셋을 먼저 반영(배너 유무가 바뀌었을 수 있음).
+  if (show) updateHeaderOffsetVar(header);
+  if (show === headerPeekShown) return;
+  headerPeekShown = show;
+  header.classList.toggle(HEADER_PEEK_CLASS, show);
+}
+
+function onHeaderAutoHideMouseMove(e) {
+  if (headerPeekPinned) return; // 헤더에 마우스 올라가 있으면 유지
+  // 히스테리시스로 경계 깜빡임 방지: 숨김→표시는 좁은 영역(offset+8px)에서만 켜고,
+  // 표시→숨김은 헤더 아래(offset+60+24px)를 벗어나야 끈다. 두 임계가 달라
+  // 경계에서 on/off가 진동하지 않는다. (배너 있으면 offset만큼 아래로 내려감)
+  const offset = readHeaderInlineOffsetPx(document.getElementById("header"));
+  const showThreshold = offset + HEADER_PEEK_ZONE_PX; // 켜는 경계(좁게)
+  const hideThreshold = offset + 60 + HEADER_PEEK_HYSTERESIS_PX; // 끄는 경계(넓게)
+  if (headerPeekShown) {
+    if (e.clientY > hideThreshold) setHeaderPeek(false);
+  } else {
+    if (e.clientY <= showThreshold) setHeaderPeek(true);
+  }
+}
+
+function onHeaderAreaEnter() {
+  headerPeekPinned = true;
+  setHeaderPeek(true);
+}
+
+function onHeaderAreaLeave() {
+  // pin만 풀고 즉시 숨기지 않는다 — 숨김 여부는 mousemove 히스테리시스가 판단해
+  // 헤더 하단 경계에서 갑자기 사라졌다 나타나는 깜빡임을 막는다. 마우스가 화면을
+  // 떠난 경우(relatedTarget 없음)엔 즉시 숨긴다.
+  headerPeekPinned = false;
+}
+
+// 마우스가 페이지(뷰포트) 밖으로 나가면 헤더를 숨긴다(mousemove가 멈춰 표시로
+// 남는 것 방지). relatedTarget이 null이면 문서를 떠난 것.
+function onDocumentMouseOut(e) {
+  if (e.relatedTarget === null && !headerPeekPinned) setHeaderPeek(false);
+}
+
+// sticky 보정량(--cheese-sticky-shift)을 스크롤량에 '연속' 연동한다. 클래스로
+// 0↔-60px 이산 전환하면 sticky 고정 순간 점프하므로, 스크롤 0~60px 동안 0→-60px로
+// 매끄럽게 따라가게 한다(헤더·탭이 같이 올라가다 sticky 고정되는 치지직 동작 재현).
+// 치지직 스크롤 컨테이너는 window/layout-body/내부 섹션 중 페이지마다 달라 후보들의
+// scrollTop 최댓값을 쓴다. capture 단계 리스너로 어느 컨테이너든 잡는다.
+const STICKY_SHIFT_MAX_PX = 60; // 헤더 높이만큼만 보정(그 이상 스크롤해도 -60 고정)
+let headerScrollRaf = 0;
+function updateStickyShift() {
+  headerScrollRaf = 0;
+  const candidates = [
+    window.scrollY || 0,
+    document.scrollingElement?.scrollTop || 0,
+    document.getElementById("layout-body")?.scrollTop || 0,
+  ];
+  const section = document.querySelector(
+    'div#layout-body section[class*="_section_"]',
+  );
+  if (section) candidates.push(section.scrollTop || 0);
+  const scrollTop = Math.max(0, ...candidates);
+  const shift = -Math.min(STICKY_SHIFT_MAX_PX, scrollTop); // 0 → -60px
+  const next = `${shift}px`;
+  const root = document.documentElement;
+  if (root.style.getPropertyValue("--cheese-sticky-shift") !== next) {
+    root.style.setProperty("--cheese-sticky-shift", next);
+  }
+}
+function onHeaderScroll() {
+  // rAF로 합쳐 과도한 변수 갱신/스래싱 방지(멱등 비교).
+  if (headerScrollRaf) return;
+  headerScrollRaf = requestAnimationFrame(updateStickyShift);
+}
+
+function bindHeaderAutoHide() {
+  const header = document.getElementById("header");
+  document.addEventListener("mousemove", onHeaderAutoHideMouseMove, {
+    passive: true,
+  });
+  document.addEventListener("mouseout", onDocumentMouseOut, { passive: true });
+  // 스크롤 감지(capture=어느 스크롤 컨테이너든 잡음). sticky transform 보정 게이트.
+  document.addEventListener("scroll", onHeaderScroll, {
+    passive: true,
+    capture: true,
+  });
+  // 헤더 위에 있거나 포커스가 있으면 계속 표시(메뉴 조작 중 사라지지 않게).
+  header?.addEventListener("mouseenter", onHeaderAreaEnter);
+  header?.addEventListener("mouseleave", onHeaderAreaLeave);
+  header?.addEventListener("focusin", onHeaderAreaEnter);
+  header?.addEventListener("focusout", onHeaderAreaLeave);
+  headerAutoHideBoundEl = header || null;
+  updateHeaderOffsetVar(header); // 시작부터 배너 오프셋 반영(숨김 top 계산 정확히)
+  updateStickyShift(); // 진입 시 현재 스크롤량 반영
+}
+
+function unbindHeaderAutoHide() {
+  const header = document.getElementById("header");
+  document.removeEventListener("mousemove", onHeaderAutoHideMouseMove);
+  document.removeEventListener("mouseout", onDocumentMouseOut);
+  document.removeEventListener("scroll", onHeaderScroll, { capture: true });
+  header?.removeEventListener("mouseenter", onHeaderAreaEnter);
+  header?.removeEventListener("mouseleave", onHeaderAreaLeave);
+  header?.removeEventListener("focusin", onHeaderAreaEnter);
+  header?.removeEventListener("focusout", onHeaderAreaLeave);
+  if (headerScrollRaf) {
+    cancelAnimationFrame(headerScrollRaf);
+    headerScrollRaf = 0;
+  }
+  headerPeekPinned = false;
+  setHeaderPeek(false); // peek 클래스 제거(기능 끄면 CSS도 빠져 원상복구)
+  document.documentElement.style.removeProperty("--cheese-header-offset"); // 변수 정리
+  document.body.classList.remove("cheese-has-banner"); // 배너 마커 정리
+  document.documentElement.style.removeProperty("--cheese-sticky-shift"); // 보정량 정리
+  headerAutoHideBoundEl = null; // 다시 켜질 때 새로 바인딩되도록
+}
+
+// 기능 on/off에 따라 리스너를 켜고 끈다. SPA로 header가 재생성될 수 있어 멱등 재호출.
+function applyHeaderAutoHide() {
+  const on = featureFlags.headerAutoHide;
+  if (on === headerAutoHideOn) {
+    // 상태 동일하지만 header가 교체됐을 수 있으니 켜진 상태면 헤더 리스너 보정 +
+    // 배너 오프셋 갱신. init()이 SPA 전환/DOM 변화마다 호출되므로, 배너 있는 메인 →
+    // 배너 없는 라이브로 이동(peek 이벤트 없이)해도 여기서 offset이 51px→0으로
+    // 따라잡힌다(안 하면 사이드바가 51px만큼 빈 채로 남음).
+    if (on) {
+      rebindHeaderAutoHideElement();
+      updateHeaderOffsetVar(document.getElementById("header"));
+    }
+    return;
+  }
+  headerAutoHideOn = on;
+  if (on) bindHeaderAutoHide();
+  else unbindHeaderAutoHide();
+}
+
+// SPA 재렌더로 header 요소가 바뀌면 헤더 전용 리스너를 새 요소에 다시 건다.
+function rebindHeaderAutoHideElement() {
+  const header = document.getElementById("header");
+  if (!header || header === headerAutoHideBoundEl) return;
+  // 이전 요소의 리스너는 요소가 사라지면 자동 GC되지만, 새 요소엔 다시 건다.
+  header.addEventListener("mouseenter", onHeaderAreaEnter);
+  header.addEventListener("mouseleave", onHeaderAreaLeave);
+  header.addEventListener("focusin", onHeaderAreaEnter);
+  header.addEventListener("focusout", onHeaderAreaLeave);
+  headerAutoHideBoundEl = header;
+  // 새 요소엔 peek 클래스가 없으니 캐시를 실제 상태(숨김)로 맞춘다(멱등 토글 동기화).
+  headerPeekShown = header.classList.contains(HEADER_PEEK_CLASS);
 }
 
 // 사이드바 메뉴 항목/섹션에 숨김 마커 클래스를 부여/제거한다. 클래스 해시는
@@ -6682,6 +6951,7 @@ function broadcastFeatureFlags() {
       flags: { ...featureFlags },
       syncPreset: syncPresetValue,
       syncCustom: syncCustomValue, // {enable,target} 또는 null
+      mixerAlwaysOn, // 오디오 믹서 항상 켜기(전역)
     },
     location.origin,
   );
@@ -6694,10 +6964,12 @@ async function loadFeatureFlags() {
       FEATURE_HIDDEN_KEY,
       SYNC_PRESET_KEY,
       SYNC_CUSTOM_KEY,
+      MIXER_ALWAYS_ON_KEY,
     ]);
     syncPresetValue = normalizeSyncPresetValue(data?.[SYNC_PRESET_KEY]);
     const custom = data?.[SYNC_CUSTOM_KEY];
     syncCustomValue = custom && typeof custom === "object" ? custom : null;
+    mixerAlwaysOn = data?.[MIXER_ALWAYS_ON_KEY] === true;
     applyFeatureFlags(data?.[FEATURE_HIDDEN_KEY]); // 내부에서 broadcast
   } catch {
     // 실패 시 전부 표시(기본값) 유지.
@@ -6716,10 +6988,17 @@ if (chrome.storage?.onChanged) {
       const custom = changes[SYNC_CUSTOM_KEY].newValue;
       syncCustomValue = custom && typeof custom === "object" ? custom : null;
     }
+    if (changes[MIXER_ALWAYS_ON_KEY]) {
+      mixerAlwaysOn = changes[MIXER_ALWAYS_ON_KEY].newValue === true;
+    }
     if (changes[FEATURE_HIDDEN_KEY]) {
       applyFeatureFlags(changes[FEATURE_HIDDEN_KEY].newValue); // broadcast 포함
-    } else if (changes[SYNC_PRESET_KEY] || changes[SYNC_CUSTOM_KEY]) {
-      broadcastFeatureFlags(); // 프리셋/커스텀만 바뀐 경우도 전달
+    } else if (
+      changes[SYNC_PRESET_KEY] ||
+      changes[SYNC_CUSTOM_KEY] ||
+      changes[MIXER_ALWAYS_ON_KEY]
+    ) {
+      broadcastFeatureFlags(); // 프리셋/커스텀/항상켜기만 바뀐 경우도 전달
     }
     if (changes[FOLLOW_REFRESH_KEY]) {
       applyFollowRefresh(changes[FOLLOW_REFRESH_KEY].newValue);
@@ -6740,6 +7019,7 @@ function init() {
   ensureSidebarObserver(); // 사이드바 전담 옵저버로 즉시 재적용(깜빡임 최소화)
   ensureHeaderNav(); // 사이드바 숨김 시 헤더 미니 네비 보장
   ensureHeaderObserver(); // 헤더 재렌더로 사라지면 즉시 복구
+  applyHeaderAutoHide(); // 자동 숨김 켜져 있으면 새 헤더 요소에 리스너 보정
 
   cleanupStudioMakeClipViewIfInactive();
 

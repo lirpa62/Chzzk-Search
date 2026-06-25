@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "치즈 플래터 - Chzzk Platter",
   "short_name": "Chzzk Platter",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "치지직 검색·오디오 믹서·비디오 필터·실시간 따라잡기·레이아웃 정리를 한 접시에.",
   "icons": {
     "16": "icons/icon-16.png",

@@ -138,6 +138,29 @@
   );
   loadHeaderNav();
 
+  // ── 오디오 믹서 항상 켜기(전역) ───────────────────────────────────────────
+  // data-feature와 별개 키. 체크=항상 켜기(첫 제스처 후 자동 활성화).
+  const MIXER_ALWAYS_ON_KEY = "cheeseMixerAlwaysOn";
+  const mixerAlwaysOnInput = document.querySelector("[data-mixer-always-on]");
+
+  async function loadMixerAlwaysOn() {
+    let on = false;
+    try {
+      const data = await chrome.storage?.local?.get(MIXER_ALWAYS_ON_KEY);
+      on = data?.[MIXER_ALWAYS_ON_KEY] === true;
+    } catch {}
+    if (mixerAlwaysOnInput) mixerAlwaysOnInput.checked = on;
+  }
+
+  mixerAlwaysOnInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [MIXER_ALWAYS_ON_KEY]: mixerAlwaysOnInput.checked,
+      });
+    } catch {}
+  });
+  loadMixerAlwaysOn();
+
   // ── 실시간 따라잡기 민감도 프리셋(low/normal/high/custom) ──────────────────
   const SYNC_PRESET_KEY = "cheeseSyncPreset";
   const SYNC_CUSTOM_KEY = "cheeseSyncCustom"; // {enable, target}

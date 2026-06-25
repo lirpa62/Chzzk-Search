@@ -542,8 +542,7 @@
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.28);
   color: rgba(255, 255, 255, 0.92);
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 11px;
   line-height: 1.5;
   resize: vertical;
@@ -1191,4 +1190,43 @@
   color: rgba(255, 255, 255, 0.55);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* 음량 슬라이더 % 툴팁(native 볼륨 슬라이더 wrap 안에 절대배치) */
+.cheese-volume-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: 59px;
+  padding: 5px 10px;
+  background-color: rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  border-radius: 14px;
+  z-index: 40;
+  color: #fff;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%) translateY(2px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.cheese-volume-tooltip.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 게인 슬라이더 툴팁: 래퍼(.cheese-audio-mixer-control) 직속에 두고 래퍼를
+   기준으로 배치한다 — 슬라이더 안에 두면 믹서 버튼 native 툴팁이 뜰 때 슬라이더가
+   밀려 함께 출렁였다. 래퍼는 하단 바 flex 아이템이라 세로 위치가 안정적. */
+.cheese-audio-mixer-control {
+  position: relative;
+}
+
+.cheese-gain-tooltip {
+  left: 50%;
+  bottom: 55px;
 }
