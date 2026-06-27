@@ -5,6 +5,11 @@
   color: #00ffa3;
 }
 
+/* 탭 음소거 버튼: 음소거 상태면 강조색 */
+.cheese-tab-mute-button.is-muted {
+  color: #ff5454;
+}
+
 .cheese-audio-mixer-button .pzp-ui-icon {
   display: flex;
   align-items: center;

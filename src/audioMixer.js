@@ -15,6 +15,7 @@
     audioMixer: false,
     streamStats: false,
     liveSync: false,
+    tabMute: false,
   };
   // '항상 켜기'(전역) + 첫 사용자 제스처 감지. 제스처 전엔 자동 활성화하지 않는다
   // (AudioContext 자동재생 정책 + 타 확장과의 source 선점 경쟁 회피).
@@ -26,6 +27,7 @@
     featureFlags.audioMixer = f.audioMixer === true;
     featureFlags.streamStats = f.streamStats === true;
     featureFlags.liveSync = f.liveSync === true;
+    featureFlags.tabMute = f.tabMute === true;
     // 오디오 믹서 '항상 켜기'(전역). 켜져 있으면 첫 사용자 제스처 이후 자동 활성화.
     mixerAlwaysOn = e.data.mixerAlwaysOn === true;
     // 따라잡기 민감도 프리셋(낮음/보통/높음/커스텀). content.js가 chrome.storage에서
@@ -41,12 +43,30 @@
     location.origin,
   );
 
+  // content.js(격리 월드)가 background로부터 받은 탭 음소거 상태를 돌려준다.
+  window.addEventListener("message", (e) => {
+    if (e.source !== window || e.data?.source !== "cheese-tab-mute-content")
+      return;
+    tabMutedState = e.data.muted === true;
+    if (typeof syncTabMuteButton === "function") syncTabMuteButton();
+  });
+  // 탭 음소거 토글/조회 요청을 content.js로 보낸다.
+  function requestTabMuteToggle() {
+    window.postMessage({ source: "cheese-tab-mute", type: "toggle" }, location.origin);
+  }
+  function requestTabMuteQuery() {
+    window.postMessage({ source: "cheese-tab-mute", type: "query" }, location.origin);
+  }
+
   const PANEL_ID = "cheese-audio-mixer-panel";
   const BUTTON_CLASS = "cheese-audio-mixer-button";
   const CONTROL_CLASS = "cheese-audio-mixer-control";
   const STATS_PANEL_ID = "cheese-stream-stats-panel";
   const STATS_BUTTON_CLASS = "cheese-stream-stats-button";
   const STATS_REFRESH_MS = 1000;
+  // 탭 음소거 버튼(브라우저 탭 전체 음소거 토글, background 경유).
+  const TAB_MUTE_BUTTON_CLASS = "cheese-tab-mute-button";
+  let tabMutedState = false; // content.js 응답으로 동기화되는 현재 탭 음소거 상태
   // 음량 슬라이더 조절 시 현재 % 값을 보여주는 툴팁.
   const VOLUME_TOOLTIP_CLASS = "cheese-volume-tooltip";
   const VOLUME_TOOLTIP_HIDE_MS = 700; // 조작 멈춘 뒤 이 시간 후 숨김
@@ -3253,6 +3273,68 @@
       .forEach((b) => b.remove());
   }
 
+  // ── 탭 음소거 버튼 ─────────────────────────────────────────────────────────
+  // 스피커 아이콘(음소거/해제). 치지직 음소거(영상)와 별개로 '브라우저 탭 전체'를
+  // 음소거한다(background의 chrome.tabs.update 경유).
+  function tabMuteIcon(muted) {
+    return muted
+      ? `<svg class="pzp-ui-icon__svg" width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M19 11.5 14 15h-3.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H14l5 3.5v-13Z" fill="currentColor"/><path d="m23 15 5 5m0-5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`
+      : `<svg class="pzp-ui-icon__svg" width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true"><path d="M19 11.5 14 15h-3.5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1H14l5 3.5v-13Z" fill="currentColor"/><path d="M23 14.5a4.5 4.5 0 0 1 0 7M25.5 12a8 8 0 0 1 0 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>`;
+  }
+
+  function createTabMuteButton() {
+    const btn = document.createElement("button");
+    btn.className = `${TAB_MUTE_BUTTON_CLASS} pzp-pc__setting-button pzp-button pzp-pc-ui-button`;
+    btn.type = "button";
+    const label = tabMutedState ? "탭 음소거 해제" : "탭 음소거";
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("aria-pressed", String(tabMutedState));
+    btn.innerHTML = `<span class="pzp-button__tooltip pzp-button__tooltip--top">${label}</span><span class="pzp-ui-icon">${tabMuteIcon(tabMutedState)}</span>`;
+    return btn;
+  }
+
+  function ensureTabMuteButton() {
+    const player = findPlayer();
+    if (!player) return;
+    const controls = player.querySelector(".pzp-pc__bottom-buttons-right");
+    if (!controls) return;
+    if (controls.querySelector(`.${TAB_MUTE_BUTTON_CLASS}`)) {
+      syncTabMuteButton();
+      return;
+    }
+    const btn = createTabMuteButton();
+    // 스트림 정보 버튼 앞(있으면), 없으면 우측 그룹 맨 앞.
+    const anchor =
+      controls.querySelector(`.${STATS_BUTTON_CLASS}`) ||
+      controls.querySelector(".custom__clip-button") ||
+      controls.querySelector(".cheese-search-comment-timestamp-button") ||
+      controls.firstChild;
+    controls.insertBefore(btn, anchor);
+    requestTabMuteQuery(); // 현재 탭 음소거 상태를 받아 아이콘 동기화
+  }
+
+  function removeTabMuteButton() {
+    document
+      .querySelectorAll(`.${TAB_MUTE_BUTTON_CLASS}`)
+      .forEach((b) => b.remove());
+  }
+
+  // 아이콘/라벨을 현재 상태로 맞춘다. 멱등(변경 시만 갱신, 옵저버 자가발화 방지).
+  function syncTabMuteButton() {
+    const btn = document.querySelector(`.${TAB_MUTE_BUTTON_CLASS}`);
+    if (!btn) return;
+    const pressed = String(tabMutedState);
+    if (btn.getAttribute("aria-pressed") === pressed) return;
+    const label = tabMutedState ? "탭 음소거 해제" : "탭 음소거";
+    btn.setAttribute("aria-pressed", pressed);
+    btn.setAttribute("aria-label", label);
+    btn.classList.toggle("is-muted", tabMutedState);
+    const tip = btn.querySelector(".pzp-button__tooltip");
+    if (tip && tip.textContent !== label) tip.textContent = label;
+    const icon = btn.querySelector(".pzp-ui-icon");
+    if (icon) icon.innerHTML = tabMuteIcon(tabMutedState);
+  }
+
   let statsTimer = 0;
 
   function toggleStatsPanel() {
@@ -3340,6 +3422,15 @@
   }
 
   // 스트림 정보 버튼/패널 클릭 위임(오디오 믹서와 동일하게 document 레벨).
+  // 탭 음소거 버튼 클릭(document 위임 — 플레이어 재렌더로 버튼이 교체돼도 동작).
+  document.addEventListener("click", (e) => {
+    const muteBtn = e.target.closest?.(`.${TAB_MUTE_BUTTON_CLASS}`);
+    if (!muteBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    requestTabMuteToggle(); // 응답(cheese-tab-mute-content)으로 상태/아이콘 갱신
+  });
+
   document.addEventListener("click", (e) => {
     const btn = e.target.closest?.(`.${STATS_BUTTON_CLASS}`);
     if (btn) {
@@ -4038,6 +4129,11 @@
       removeSyncButton();
     } else {
       ensureSyncButton();
+    }
+    if (featureFlags.tabMute) {
+      removeTabMuteButton();
+    } else {
+      ensureTabMuteButton();
     }
     // 음량 % 툴팁은 믹서 on/off와 무관하게 항상 부착(기본 볼륨 조작 보조).
     ensureVolumeTooltip();

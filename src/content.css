@@ -2540,8 +2540,12 @@
   visibility: hidden;
 }
 
-#cheese-header-follow .cheese-header-follow-item:hover .cheese-header-follow-tooltip,
-#cheese-header-follow .cheese-header-follow-item:focus-within .cheese-header-follow-tooltip {
+#cheese-header-follow
+  .cheese-header-follow-item:hover
+  .cheese-header-follow-tooltip,
+#cheese-header-follow
+  .cheese-header-follow-item:focus-within
+  .cheese-header-follow-tooltip {
   opacity: 1;
   visibility: visible;
 }
@@ -2673,4 +2677,99 @@
   background-color: currentColor;
   content: "";
   transform: translateY(-50%);
+}
+
+/* 채널 홈 탭리스트의 라이브 바로가기 버튼 */
+.cheese-channel-live-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease,
+    opacity 0.12s ease;
+}
+
+/* 끝(우측) 배치: 탭들과 떨어뜨려 우측 끝으로(탭 flex row 가정). 미적용 시 탭 바로 뒤. */
+.cheese-channel-live-button.at-end {
+  margin-left: auto;
+}
+
+/* 라이브 중: 치지직 라이브 강조색(레드) */
+.cheese-channel-live-button.is-live {
+  background-color: #ff5454;
+  color: #fff;
+}
+
+.cheese-channel-live-button.is-live:hover {
+  background-color: #e64545;
+}
+
+/* 오프라인: 중립 회색(반투명) */
+.cheese-channel-live-button.is-offline {
+  background-color: rgba(125, 125, 125, 0.18);
+  color: inherit;
+  opacity: 0.85;
+}
+
+.cheese-channel-live-button.is-offline:hover {
+  background-color: rgba(125, 125, 125, 0.28);
+  opacity: 1;
+}
+
+.cheese-channel-live-button-icon {
+  display: block;
+  flex: none;
+}
+
+/* 라이브 상태 확인 중: 클릭 비활성 + 3-dot pulse */
+.cheese-channel-live-button.is-loading {
+  background-color: var(--color-content-violet-01);
+  color: var(--color-content-01-fixed);
+  opacity: 0.85;
+  cursor: default;
+  pointer-events: none;
+}
+
+.cheese-channel-live-button-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.cheese-channel-live-button-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: currentColor;
+  animation: cheese-clb-pulse 1s ease-in-out infinite;
+}
+
+.cheese-channel-live-button-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.cheese-channel-live-button-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes cheese-clb-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }

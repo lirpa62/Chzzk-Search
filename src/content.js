@@ -80,11 +80,18 @@ let syncCustomValue = null; // {enable, target} 또는 null
 // 오디오 믹서 '항상 켜기'(전역). MAIN world(audioMixer)에 함께 전달.
 const MIXER_ALWAYS_ON_KEY = "cheeseMixerAlwaysOn";
 let mixerAlwaysOn = false;
+// 채널 홈 탭리스트 끝에 라이브 바로가기 버튼 표시(전역, 기본 ON). content.js 전용.
+const CHANNEL_LIVE_BUTTON_KEY = "cheeseChannelLiveButton";
+let channelLiveButtonOn = true;
+// 라이브 바로가기 버튼을 탭리스트 '끝(우측)'에 둘지(true) 탭들 바로 뒤(false)에 둘지.
+const CHANNEL_LIVE_BUTTON_END_KEY = "cheeseChannelLiveButtonEnd";
+let channelLiveButtonEnd = true;
 const featureFlags = {
   audioMixer: false,
   videoFilter: false,
   liveSync: false,
   streamStats: false,
+  tabMute: false, // 플레이어 우측 컨트롤의 '탭 음소거' 버튼 숨김
   commentTimestamp: false,
   searchVideos: false,
   searchClips: false,
@@ -6594,8 +6601,11 @@ header#header :has(> form[role="search"])::before { width: 0 !important; }`,
 }`,
       // 사이드바: 헤더가 빠졌으니 배너 아래(offset)부터 항상 시작(peek 무관).
       // 치지직 인라인 translateY(60px)는 무력화. transition 없음(토글 시 안 움직임).
+      // 높이도 치지직 인라인 calc(100vh - 111px)(배너51+헤더60)에서 헤더 60px를
+      // 회수해 calc(100vh - 배너오프셋)으로 덮는다(안 하면 아래에 60px 빈 공간).
       `aside#sidebar {
   transform: translateY(var(--cheese-header-offset, 0px)) !important;
+  height: calc(100vh - var(--cheese-header-offset, 0px)) !important;
 }`,
       // 콘텐츠 내 sticky 요소(탭/필터/패널헤더)는 인라인 top에 헤더 높이(60px)가
       // 미리 더해진 값(예: 채널 탭 110px·패널헤더 153px, lives 탭 111px·필터 154px)을
@@ -6905,6 +6915,101 @@ function findSidebarFollowNav() {
   }
   return null;
 }
+
+// ── 팔로잉 '더보기' 한 번에 모두 펼치기 + 갱신 후 펼침 복원 ──────────────────
+// 치지직 더보기는 클릭당 일부만 추가 로드한다. 사용자가 한 번 클릭하면 '접기'가
+// 나올 때까지(=전부 로드) 자동 반복 클릭한다. 또 자동 갱신/오프라인 숨김의 재렌더로
+// 펼침이 접힌 채로 돌아오면 다시 펼친다(followExpandWanted로 사용자 의사 추적).
+let followExpandWanted = false; // 사용자가 '모두 펼침'을 원하는 상태
+let followAutoExpandTimer = 0; // 반복 클릭 드라이버 타이머
+let followAutoExpandTries = 0; // 안전: 무한 반복 방지
+
+// 팔로잉 nav의 더보기/접기 버튼을 찾는다(_more_button_ 클래스, aria-label로 구분).
+function findFollowMoreButton(nav) {
+  const followNav = nav || findSidebarFollowNav();
+  return (
+    followNav?.querySelector('button[aria-label="더보기"]') || null
+  );
+}
+function findFollowCollapseButton(nav) {
+  const followNav = nav || findSidebarFollowNav();
+  return followNav?.querySelector('button[aria-label="접기"]') || null;
+}
+
+function stopFollowAutoExpand() {
+  if (followAutoExpandTimer) {
+    clearTimeout(followAutoExpandTimer);
+    followAutoExpandTimer = 0;
+  }
+  followAutoExpandTries = 0;
+}
+
+// '접기'가 나올 때까지 더보기를 반복 클릭한다. 클릭→React 추가 로드(비동기)→다음
+// 더보기 버튼 등장을 기다려 다시 클릭. 접기가 보이거나 더보기가 사라지면 종료.
+function driveFollowAutoExpand() {
+  followAutoExpandTimer = 0;
+  if (!followExpandWanted) return;
+  const nav = findSidebarFollowNav();
+  if (!nav) return;
+  if (findFollowCollapseButton(nav)) {
+    // 이미 전부 펼침(접기 버튼) → 종료.
+    stopFollowAutoExpand();
+    return;
+  }
+  const more = findFollowMoreButton(nav);
+  if (!more) {
+    // 더보기/접기 둘 다 없음(목록이 짧거나 전환 중) → 더 할 일 없음.
+    stopFollowAutoExpand();
+    return;
+  }
+  if (followAutoExpandTries >= 50) {
+    // 안전장치: 비정상적으로 많이 반복되면 중단(rate-limit/루프 방지).
+    stopFollowAutoExpand();
+    return;
+  }
+  followAutoExpandTries += 1;
+  more.click();
+  // 추가 로드 렌더를 기다렸다 다음 라운드(없어질 때까지).
+  followAutoExpandTimer = setTimeout(driveFollowAutoExpand, 250);
+}
+
+// 사용자가 펼침을 원하는데(followExpandWanted) 현재 접힌 상태(더보기 버튼 존재)면
+// 자동 펼침을 (재)시작한다. 사이드바 옵저버/갱신 후 호출 → 재렌더로 접혀도 복원.
+function ensureFollowExpansion() {
+  if (!followExpandWanted) return;
+  const nav = findSidebarFollowNav();
+  if (!nav) return;
+  // 접기 버튼이 있으면 이미 펼쳐진 상태 → 아무것도 안 함.
+  if (findFollowCollapseButton(nav)) return;
+  // 더보기 버튼이 있고 드라이버가 안 돌고 있으면 시작.
+  if (findFollowMoreButton(nav) && !followAutoExpandTimer) {
+    followAutoExpandTries = 0;
+    driveFollowAutoExpand();
+  }
+}
+
+// 팔로잉 더보기/접기 버튼 클릭을 가로채 사용자 의사를 기록하고 자동 펼침을 건다.
+// capture 단계로 치지직 React 핸들러보다 먼저 의사만 기록(클릭 자체는 막지 않음).
+function onFollowMoreClickCapture(e) {
+  const btn = e.target?.closest?.('button[aria-label="더보기"], button[aria-label="접기"]');
+  if (!btn) return;
+  // 팔로잉 nav 안의 버튼만 대상.
+  const nav = btn.closest('nav[class*="_section_"]');
+  if (!nav || !getSidebarNavLabel(nav).includes("팔로")) return;
+  if (btn.getAttribute("aria-label") === "더보기") {
+    // 사용자가 펼침 시작 → 모두 펼치고 싶다는 의사. 치지직이 1차 로드한 뒤
+    // 우리가 접기 나올 때까지 이어서 클릭한다(이 클릭은 그대로 진행).
+    followExpandWanted = true;
+    followAutoExpandTries = 0;
+    if (followAutoExpandTimer) clearTimeout(followAutoExpandTimer);
+    followAutoExpandTimer = setTimeout(driveFollowAutoExpand, 250);
+  } else {
+    // '접기' → 펼침 의사 해제(이후 갱신에도 다시 안 펼침).
+    followExpandWanted = false;
+    stopFollowAutoExpand();
+  }
+}
+document.addEventListener("click", onFollowMoreClickCapture, true);
 
 let headerFollowLiveItems = [];
 let headerFollowLiveInfoLoaded = false;
@@ -7267,10 +7372,12 @@ function ensureSidebarObserver() {
     // 동기 즉시 재적용(디바운스 없음). applySidebarSections는 멱등(toggle force).
     applySidebarSections();
     ensureHeaderFollowNav();
+    ensureFollowExpansion(); // 갱신/재렌더로 접혀도 펼침 의사면 다시 펼침
   });
   sidebarObserver.observe(sidebar, { childList: true, subtree: true });
   applySidebarSections();
   ensureHeaderFollowNav();
+  ensureFollowExpansion();
 }
 
 // ── 헤더 미니 네비 주입/유지 ──────────────────────────────────────────────
@@ -7403,6 +7510,139 @@ function spaNavigate(href) {
   } catch {
     location.href = href; // 최후엔 전체 이동.
   }
+}
+
+// ── 채널 홈 라이브 바로가기 버튼 ───────────────────────────────────────────
+// 채널 페이지(chzzk.naver.com/<32hex>/...) 탭리스트(div[class*="_tab_"] 안
+// [role="tablist"]) 끝에 /live/<id>로 가는 버튼을 추가한다. 라이브 상태(OPEN/CLOSE)를
+// API로 조회해 라벨을 '라이브'/'오프라인'으로 바꾼다. SPA 네비로 전체 리로드 없이 이동.
+const CHANNEL_LIVE_BUTTON_CLASS = "cheese-channel-live-button";
+// 채널별 라이브 상태 캐시 {channelId: {live:boolean, at:ms}} + in-flight 가드.
+const channelLiveStatus = new Map();
+let channelLiveFetching = "";
+
+// 현재 경로가 채널 페이지면 32hex 채널id 반환(없으면 null). 경로 첫 세그먼트가
+// 32hex일 때만 매칭되므로 /live/<id>·/video/<no>(첫 세그먼트가 live/video) 자동 제외.
+function getChannelHomeId() {
+  const m = location.pathname.match(/^\/([a-f0-9]{32})(?:\/|$)/i);
+  return m ? m[1] : null;
+}
+
+async function fetchChannelLiveStatus(channelId) {
+  if (channelLiveFetching === channelId) return;
+  const cached = channelLiveStatus.get(channelId);
+  if (cached && Date.now() - cached.at < 30000) return; // 30초 캐시
+  channelLiveFetching = channelId;
+  try {
+    const res = await fetch(
+      `https://api.chzzk.naver.com/polling/v3.1/channels/${encodeURIComponent(channelId)}/live-status`,
+      { credentials: "include", headers: { accept: "application/json" } },
+    );
+    if (!res.ok) return;
+    const json = await res.json();
+    const live = json?.content?.status === "OPEN";
+    channelLiveStatus.set(channelId, { live, at: Date.now() });
+    ensureChannelLiveButton(); // 상태 반영해 라벨 갱신
+  } catch {
+    // 실패 시 캐시 없음 → 라벨은 보수적으로 '라이브'(이동은 가능).
+  } finally {
+    if (channelLiveFetching === channelId) channelLiveFetching = "";
+  }
+}
+
+// 바로가기 SVG(네모+화살표) 아이콘.
+function channelLiveArrowIcon() {
+  return `<svg class="${CHANNEL_LIVE_BUTTON_CLASS}-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5M18 13.5V19a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 19V8a1.5 1.5 0 0 1 1.5-1.5H11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+function ensureChannelLiveButton() {
+  // 기능 off거나 채널 페이지가 아니면 제거.
+  const channelId = channelLiveButtonOn ? getChannelHomeId() : null;
+  const existing = document.querySelector(`.${CHANNEL_LIVE_BUTTON_CLASS}`);
+  if (!channelId) {
+    existing?.remove();
+    return;
+  }
+  // 탭리스트 찾기: div[class*="_tab_"] 안의 [role="tablist"](채널 홈 탭바).
+  const tab = document.querySelector('div#layout-body [class*="_tab_"]');
+  const list = tab?.querySelector('[role="tablist"]');
+  if (!list) {
+    existing?.remove();
+    return;
+  }
+
+  const href = `/live/${channelId}`;
+  const status = channelLiveStatus.get(channelId);
+  // 3-상태: loading(미조회) / live / offline. 미조회 땐 라이브/오프라인을 확정 못 하니
+  // 깜빡임(라이브→오프라인) 대신 로딩 표시를 보여준다(클릭 비활성).
+  const phase = !status ? "loading" : status.live ? "live" : "offline";
+  const label =
+    phase === "loading" ? "확인 중" : phase === "live" ? "라이브" : "오프라인";
+
+  let btn = list.querySelector(`.${CHANNEL_LIVE_BUTTON_CLASS}`);
+  if (!btn) {
+    btn = document.createElement("a");
+    btn.className = CHANNEL_LIVE_BUTTON_CLASS;
+    btn.addEventListener("click", (e) => {
+      if (
+        e.defaultPrevented ||
+        e.button !== 0 ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.shiftKey ||
+        e.altKey
+      )
+        return;
+      e.preventDefault();
+      // 로딩 중(상태 미확정)엔 이동하지 않는다(잘못된 방식으로 갈 수 있음).
+      if (btn.classList.contains("is-loading")) return;
+      const target = btn.getAttribute("href");
+      // 라이브면 사이드바 등에 그 채널 라이브 링크가 있어 SPA 네비가 먹는다. 오프라인은
+      // 페이지에 라이브 링크가 없어 spaNavigate가 못 찾고 pushState로도 React가 '방송
+      // 종료' 경로를 잘 처리 못 한다 → 일반 전체 이동으로 확실히 보낸다.
+      if (btn.classList.contains("is-offline")) location.assign(target);
+      else spaNavigate(target);
+    });
+  }
+  // 탭리스트 마지막 자식으로 보장(치지직이 탭을 다시 그려도 끝으로 이동).
+  if (btn.parentElement !== list || list.lastElementChild !== btn) {
+    list.appendChild(btn);
+  }
+  // 멱등: 변경 있을 때만 갱신(옵저버 자가발화 방지).
+  if (btn.getAttribute("href") !== href) btn.setAttribute("href", href);
+  btn.classList.toggle("is-loading", phase === "loading");
+  btn.classList.toggle("is-live", phase === "live");
+  btn.classList.toggle("is-offline", phase === "offline");
+  // 배치: 끝(우측)이면 at-end(margin-left:auto), 아니면 탭 바로 뒤.
+  btn.classList.toggle("at-end", channelLiveButtonEnd);
+  const sig = `${href}|${phase}`;
+  if (btn.dataset.sig !== sig) {
+    btn.dataset.sig = sig;
+    btn.setAttribute(
+      "aria-label",
+      phase === "loading" ? "라이브 상태 확인 중" : `라이브 페이지로 이동 (${label})`,
+    );
+    // 로딩이면 3-dot pulse, 확정이면 화살표+라벨.
+    btn.innerHTML =
+      phase === "loading"
+        ? `<span class="${CHANNEL_LIVE_BUTTON_CLASS}-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="${CHANNEL_LIVE_BUTTON_CLASS}-label">${label}</span>`
+        : `${channelLiveArrowIcon()}<span class="${CHANNEL_LIVE_BUTTON_CLASS}-label">${label}</span>`;
+  }
+  // 상태 미조회면 조회 트리거(라벨 갱신은 fetch 완료 후 재호출).
+  if (!status) void fetchChannelLiveStatus(channelId);
+}
+
+async function loadChannelLiveButton() {
+  if (!chrome.storage?.local) return;
+  try {
+    const data = await chrome.storage.local.get([
+      CHANNEL_LIVE_BUTTON_KEY,
+      CHANNEL_LIVE_BUTTON_END_KEY,
+    ]);
+    channelLiveButtonOn = data?.[CHANNEL_LIVE_BUTTON_KEY] !== false; // 미설정/true=표시
+    channelLiveButtonEnd = data?.[CHANNEL_LIVE_BUTTON_END_KEY] !== false; // 미설정/true=끝
+  } catch {}
+  ensureChannelLiveButton();
 }
 
 // 헤더 전담 옵저버(미니 네비가 React 재렌더로 사라지면 즉시 복구).
@@ -7584,6 +7824,15 @@ if (chrome.storage?.onChanged) {
     if (changes[MIXER_ALWAYS_ON_KEY]) {
       mixerAlwaysOn = changes[MIXER_ALWAYS_ON_KEY].newValue === true;
     }
+    if (changes[CHANNEL_LIVE_BUTTON_KEY]) {
+      channelLiveButtonOn = changes[CHANNEL_LIVE_BUTTON_KEY].newValue !== false;
+      ensureChannelLiveButton();
+    }
+    if (changes[CHANNEL_LIVE_BUTTON_END_KEY]) {
+      channelLiveButtonEnd =
+        changes[CHANNEL_LIVE_BUTTON_END_KEY].newValue !== false;
+      ensureChannelLiveButton();
+    }
     if (changes[FEATURE_HIDDEN_KEY]) {
       applyFeatureFlags(changes[FEATURE_HIDDEN_KEY].newValue); // broadcast 포함
     } else if (
@@ -7626,6 +7875,7 @@ function init() {
   ensureHeaderFollowNav(); // 사이드바/주제 탭 숨김 시 팔로우 목록을 헤더에 보장
   ensureHeaderObserver(); // 헤더 재렌더로 사라지면 즉시 복구
   applyHeaderAutoHide(); // 자동 숨김 켜져 있으면 새 헤더 요소에 리스너 보정
+  ensureChannelLiveButton(); // 채널 홈 탭리스트에 라이브 바로가기 버튼 보장
 
   cleanupStudioMakeClipViewIfInactive();
 
@@ -8152,6 +8402,7 @@ init();
 void loadFeatureFlags();
 void loadFollowRefresh();
 void loadHeaderNav();
+void loadChannelLiveButton();
 
 // MAIN world 스크립트가 로드 후 플래그를 요청하면 현재 값을 보내준다(레이스 방지).
 window.addEventListener("message", (event) => {
@@ -8208,6 +8459,32 @@ window.addEventListener("message", (event) => {
       });
     } catch {}
   }
+});
+
+// ── 탭 음소거 브릿지 ─────────────────────────────────────────────────────────
+// MAIN world(audioMixer.js)의 탭 음소거 버튼이 보낸 토글/조회 요청을 background로
+// 중계하고(콘텐츠는 chrome.tabs.update 못 씀), 응답(muted)을 MAIN world로 돌려준다.
+function sendTabMute(action) {
+  try {
+    chrome.runtime.sendMessage(
+      { type: "CHEESE_TAB_MUTE", action },
+      (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) return;
+        window.postMessage(
+          { source: "cheese-tab-mute-content", muted: resp.muted === true },
+          location.origin,
+        );
+      },
+    );
+  } catch {}
+}
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window) return;
+  const data = event.data;
+  if (!data || data.source !== "cheese-tab-mute") return;
+  // type: "toggle" | "query"
+  sendTabMute(data.type === "query" ? "query" : "toggle");
 });
 
 // ── 비디오 필터 설정 저장 브릿지 ─────────────────────────────────────────────

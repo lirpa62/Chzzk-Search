@@ -2610,6 +2610,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // 탭 음소거 토글/조회 — 콘텐츠는 chrome.tabs.update를 못 쓰므로 background에서
+  // sender.tab.id로 처리한다. action: "toggle" | "query". muted 상태를 응답.
+  if (message.type === "CHEESE_TAB_MUTE") {
+    const tabId = sender?.tab?.id;
+    if (tabId == null) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        sendResponse({ ok: false });
+        return;
+      }
+      const current = Boolean(tab.mutedInfo?.muted);
+      if (message.action === "query") {
+        sendResponse({ ok: true, muted: current });
+        return;
+      }
+      const next = !current;
+      chrome.tabs.update(tabId, { muted: next }, () => {
+        sendResponse({ ok: !chrome.runtime.lastError, muted: next });
+      });
+    });
+    return true; // 비동기 응답
+  }
+
   if (message.type === "CHEESE_SEARCH_FETCH_VIDEOS") {
     fetchAllVideosShared(message.payload, sender)
       .then((result) => sendResponse({ ok: true, result }))

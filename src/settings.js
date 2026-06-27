@@ -161,6 +161,55 @@
   });
   loadMixerAlwaysOn();
 
+  // ── 채널 라이브 바로가기 버튼(전역, 기본 ON) ──────────────────────────────
+  // 체크=표시. 미설정이면 표시(true)가 기본.
+  const CHANNEL_LIVE_BUTTON_KEY = "cheeseChannelLiveButton";
+  const channelLiveButtonInput = document.querySelector(
+    "[data-channel-live-button]",
+  );
+
+  async function loadChannelLiveButton() {
+    let on = true;
+    try {
+      const data = await chrome.storage?.local?.get(CHANNEL_LIVE_BUTTON_KEY);
+      on = data?.[CHANNEL_LIVE_BUTTON_KEY] !== false; // 미설정/true=표시
+    } catch {}
+    if (channelLiveButtonInput) channelLiveButtonInput.checked = on;
+  }
+
+  channelLiveButtonInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [CHANNEL_LIVE_BUTTON_KEY]: channelLiveButtonInput.checked,
+      });
+    } catch {}
+  });
+  loadChannelLiveButton();
+
+  // 라이브 바로가기 버튼 배치(끝/탭 뒤). 기본 ON(끝).
+  const CHANNEL_LIVE_BUTTON_END_KEY = "cheeseChannelLiveButtonEnd";
+  const channelLiveButtonEndInput = document.querySelector(
+    "[data-channel-live-button-end]",
+  );
+
+  async function loadChannelLiveButtonEnd() {
+    let on = true;
+    try {
+      const data = await chrome.storage?.local?.get(CHANNEL_LIVE_BUTTON_END_KEY);
+      on = data?.[CHANNEL_LIVE_BUTTON_END_KEY] !== false; // 미설정/true=끝
+    } catch {}
+    if (channelLiveButtonEndInput) channelLiveButtonEndInput.checked = on;
+  }
+
+  channelLiveButtonEndInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [CHANNEL_LIVE_BUTTON_END_KEY]: channelLiveButtonEndInput.checked,
+      });
+    } catch {}
+  });
+  loadChannelLiveButtonEnd();
+
   // ── 실시간 따라잡기 민감도 프리셋(low/normal/high/custom) ──────────────────
   const SYNC_PRESET_KEY = "cheeseSyncPreset";
   const SYNC_CUSTOM_KEY = "cheeseSyncCustom"; // {enable, target}
