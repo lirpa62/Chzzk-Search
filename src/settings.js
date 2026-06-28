@@ -210,6 +210,52 @@
   });
   loadChannelLiveButtonEnd();
 
+  // ── 팔로잉 라이브 미리보기(전역, 기본 ON) ─────────────────────────────────
+  const FOLLOW_PREVIEW_KEY = "cheeseFollowPreview";
+  const followPreviewInput = document.querySelector("[data-follow-preview]");
+
+  async function loadFollowPreview() {
+    let on = true;
+    try {
+      const data = await chrome.storage?.local?.get(FOLLOW_PREVIEW_KEY);
+      on = data?.[FOLLOW_PREVIEW_KEY] !== false; // 미설정/true=표시
+    } catch {}
+    if (followPreviewInput) followPreviewInput.checked = on;
+  }
+
+  followPreviewInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [FOLLOW_PREVIEW_KEY]: followPreviewInput.checked,
+      });
+    } catch {}
+  });
+  loadFollowPreview();
+
+  // ── 카드 미리보기 음량(라이브 탐색 카드 호버 video, 전역 기본 ON) ──────────
+  const CARD_PREVIEW_AUDIO_KEY = "cheeseCardPreviewAudio";
+  const cardPreviewAudioInput = document.querySelector(
+    "[data-card-preview-audio]",
+  );
+
+  async function loadCardPreviewAudio() {
+    let on = true;
+    try {
+      const data = await chrome.storage?.local?.get(CARD_PREVIEW_AUDIO_KEY);
+      on = data?.[CARD_PREVIEW_AUDIO_KEY] !== false; // 미설정/true=표시
+    } catch {}
+    if (cardPreviewAudioInput) cardPreviewAudioInput.checked = on;
+  }
+
+  cardPreviewAudioInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [CARD_PREVIEW_AUDIO_KEY]: cardPreviewAudioInput.checked,
+      });
+    } catch {}
+  });
+  loadCardPreviewAudio();
+
   // ── 실시간 따라잡기 민감도 프리셋(low/normal/high/custom) ──────────────────
   const SYNC_PRESET_KEY = "cheeseSyncPreset";
   const SYNC_CUSTOM_KEY = "cheeseSyncCustom"; // {enable, target}

@@ -86,6 +86,14 @@ let channelLiveButtonOn = true;
 // 라이브 바로가기 버튼을 탭리스트 '끝(우측)'에 둘지(true) 탭들 바로 뒤(false)에 둘지.
 const CHANNEL_LIVE_BUTTON_END_KEY = "cheeseChannelLiveButtonEnd";
 let channelLiveButtonEnd = true;
+// 사이드바 팔로잉 채널 호버 시 라이브 영상 미리보기(전역, 기본 ON). content.js 전용.
+const FOLLOW_PREVIEW_KEY = "cheeseFollowPreview";
+const FOLLOW_PREVIEW_SIZE_KEY = "cheeseFollowPreviewSize"; // {w} (height는 16:9)
+let followPreviewOn = true;
+// 라이브 탐색 카드 호버 미리보기(치지직 자체 video)에 음량 버튼/우클릭 음소거 토글
+// 오버레이(전역, 기본 ON). content.js 전용.
+const CARD_PREVIEW_AUDIO_KEY = "cheeseCardPreviewAudio";
+let cardPreviewAudioOn = true;
 const featureFlags = {
   audioMixer: false,
   videoFilter: false,
@@ -6927,9 +6935,7 @@ let followAutoExpandTries = 0; // 안전: 무한 반복 방지
 // 팔로잉 nav의 더보기/접기 버튼을 찾는다(_more_button_ 클래스, aria-label로 구분).
 function findFollowMoreButton(nav) {
   const followNav = nav || findSidebarFollowNav();
-  return (
-    followNav?.querySelector('button[aria-label="더보기"]') || null
-  );
+  return followNav?.querySelector('button[aria-label="더보기"]') || null;
 }
 function findFollowCollapseButton(nav) {
   const followNav = nav || findSidebarFollowNav();
@@ -6991,7 +6997,9 @@ function ensureFollowExpansion() {
 // 팔로잉 더보기/접기 버튼 클릭을 가로채 사용자 의사를 기록하고 자동 펼침을 건다.
 // capture 단계로 치지직 React 핸들러보다 먼저 의사만 기록(클릭 자체는 막지 않음).
 function onFollowMoreClickCapture(e) {
-  const btn = e.target?.closest?.('button[aria-label="더보기"], button[aria-label="접기"]');
+  const btn = e.target?.closest?.(
+    'button[aria-label="더보기"], button[aria-label="접기"]',
+  );
   if (!btn) return;
   // 팔로잉 nav 안의 버튼만 대상.
   const nav = btn.closest('nav[class*="_section_"]');
@@ -7144,10 +7152,7 @@ function flushHeaderFollowRefreshIfNeeded() {
 
 function getHeaderFollowMaxPage() {
   const pageSize = getHeaderFollowEffectivePageSize();
-  return Math.max(
-    0,
-    Math.ceil(headerFollowLiveItems.length / pageSize) - 1,
-  );
+  return Math.max(0, Math.ceil(headerFollowLiveItems.length / pageSize) - 1);
 }
 
 function clampHeaderFollowCarouselPage() {
@@ -7229,10 +7234,7 @@ function renderHeaderFollowCarousel(container) {
   const maxPage = getHeaderFollowMaxPage();
   const pageSize = getHeaderFollowEffectivePageSize();
   const start = headerFollowCarouselPage * pageSize;
-  const items = headerFollowLiveItems.slice(
-    start,
-    start + pageSize,
-  );
+  const items = headerFollowLiveItems.slice(start, start + pageSize);
   container.dataset.sig = [
     headerFollowLiveInfoVersion,
     headerFollowCarouselPage,
@@ -7620,7 +7622,9 @@ function ensureChannelLiveButton() {
     btn.dataset.sig = sig;
     btn.setAttribute(
       "aria-label",
-      phase === "loading" ? "라이브 상태 확인 중" : `라이브 페이지로 이동 (${label})`,
+      phase === "loading"
+        ? "라이브 상태 확인 중"
+        : `라이브 페이지로 이동 (${label})`,
     );
     // 로딩이면 3-dot pulse, 확정이면 화살표+라벨.
     btn.innerHTML =
@@ -7643,6 +7647,827 @@ async function loadChannelLiveButton() {
     channelLiveButtonEnd = data?.[CHANNEL_LIVE_BUTTON_END_KEY] !== false; // 미설정/true=끝
   } catch {}
   ensureChannelLiveButton();
+}
+
+// ── 사이드바 팔로잉 채널 호버 라이브 영상 미리보기 ─────────────────────────────
+// 라이브 중인 팔로잉 채널 li에 호버하면 치지직 툴팁 위치에 음소거 라이브 영상을
+// 띄운다. live-detail API의 livePlaybackJson에서 HLS m3u8을 받아 네이티브 우선,
+// 안 되면 hls.js로 재생. 우리 자체 fixed 패널이라 React에 개입하지 않는다.
+const FOLLOW_PREVIEW_ID = "cheese-follow-preview";
+const FOLLOW_PREVIEW_HOVER_DELAY_MS = 250;
+const FOLLOW_PREVIEW_DEFAULT_W = 320; // 16:9 → 180h
+const FOLLOW_PREVIEW_MIN_W = 200;
+const FOLLOW_PREVIEW_MAX_W = 1080; // 더 크게 조절 가능
+const FOLLOW_PREVIEW_NARROW_W = 320; // 이 폭 미만이면 우측 메타(시청자/경과시간) 숨김
+
+// 폭에 따라 좁음 클래스 토글(is-narrow면 CSS가 우측 메타를 숨긴다). 멱등.
+function applyFollowPreviewWidthClass(el, w) {
+  el?.classList?.toggle("is-narrow", w < FOLLOW_PREVIEW_NARROW_W);
+}
+const FOLLOW_PREVIEW_CACHE_TTL_MS = 30000; // m3u8 토큰 만료 대비 짧게
+const followPreviewState = {
+  playbackCache: new Map(), // channelId → {m3u8, at}
+  fetching: "",
+  hoverTimer: 0,
+  currentChannelId: "",
+  hls: null, // hls.js 인스턴스(폴백 시)
+  width: FOLLOW_PREVIEW_DEFAULT_W,
+  retried: false, // 토큰 만료 등으로 1회 재시도했는지
+  bound: false,
+  resizing: false, // 드래그 리사이즈/이동 중(이때 닫기 금지)
+  pinned: false, // 고정 핀(켜면 호버 벗어나도 유지)
+  movedPos: null, // 헤더 드래그로 옮긴 좌표 {left,top}(있으면 그 위치 유지)
+  elapsedTimer: 0, // 라이브 경과 시간 1초 갱신 타이머
+};
+
+// 팔로잉 li → 32hex 채널id(a[href^="/live/"]). 없으면 null.
+function getFollowItemChannelId(li) {
+  const a = li?.querySelector?.('a[href^="/live/"]');
+  const href = a?.getAttribute("href") || "";
+  const m = href.match(/^\/live\/([a-f0-9]{32})/i);
+  return m ? m[1] : null;
+}
+
+// 팔로잉 li가 라이브 중인지(오프라인 판정의 역). isOfflineFollowItem 재사용.
+function isLiveFollowItem(li) {
+  return !isOfflineFollowItem(li);
+}
+
+// live-detail → livePlaybackJson → HLS m3u8. 캐시(30초)+in-flight 가드.
+async function fetchLivePreviewData(channelId) {
+  const cached = followPreviewState.playbackCache.get(channelId);
+  if (cached && Date.now() - cached.at < FOLLOW_PREVIEW_CACHE_TTL_MS) {
+    return cached;
+  }
+  if (followPreviewState.fetching === channelId) return null;
+  followPreviewState.fetching = channelId;
+  try {
+    const res = await fetch(
+      `https://api.chzzk.naver.com/service/v3/channels/${encodeURIComponent(channelId)}/live-detail`,
+      { credentials: "include", headers: { accept: "application/json" } },
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    const c = json?.content;
+    if (c?.status !== "OPEN") return null;
+    const raw = c?.livePlaybackJson;
+    if (!raw) return null;
+    const playback = JSON.parse(raw);
+    const medias = Array.isArray(playback?.media) ? playback.media : [];
+    // HLS 프로토콜 우선(여러 화질이면 마스터 m3u8 그대로 — hls.js/네이티브가 선택).
+    const media =
+      medias.find((m) => /hls/i.test(m?.protocol || "")) || medias[0];
+    const m3u8 = media?.path || null;
+    if (!m3u8) return null;
+    // 메타: 프로필/채널명/인증/제목/카테고리/시청자/라이브 시작시각.
+    const meta = {
+      channelName: c?.channel?.channelName || "",
+      channelImageUrl: c?.channel?.channelImageUrl || "",
+      verifiedMark: c?.channel?.verifiedMark === true,
+      title: c?.liveTitle || "",
+      category: c?.liveCategoryValue || c?.liveCategory || "",
+      viewers: Number.isFinite(Number(c?.concurrentUserCount))
+        ? new Intl.NumberFormat("ko-KR").format(Number(c.concurrentUserCount))
+        : "",
+      openAt: parsePublishDate(c?.openDate) || 0,
+    };
+    const data = { m3u8, meta, at: Date.now() };
+    followPreviewState.playbackCache.set(channelId, data);
+    return data;
+  } catch {
+    return null;
+  } finally {
+    if (followPreviewState.fetching === channelId)
+      followPreviewState.fetching = "";
+  }
+}
+
+// 미리보기 패널 생성/획득(드래그 리사이즈 핸들 포함). 1회 생성 후 재사용.
+function ensureFollowPreviewEl() {
+  let el = document.getElementById(FOLLOW_PREVIEW_ID);
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = FOLLOW_PREVIEW_ID;
+  el.innerHTML =
+    // 별도 헤더 바(채널명·카테고리·시청자 + 제목 + 고정 핀).
+    `<div class="cheese-follow-preview-header">` +
+    `<div class="cheese-follow-preview-meta"></div>` +
+    `<button type="button" class="cheese-follow-preview-pin" aria-label="고정" aria-pressed="false" title="고정">` +
+    // 'pin' 아이콘.
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>` +
+    `</button>` +
+    `</div>` +
+    // 영상 본문.
+    `<div class="cheese-follow-preview-body">` +
+    `<div class="cheese-follow-preview-loading" aria-hidden="true"><i></i><i></i><i></i></div>` +
+    `<video class="cheese-follow-preview-video" muted autoplay playsinline controls controlslist="nodownload noremoteplayback noplaybackrate"></video>` +
+    `<span class="cheese-follow-preview-resize" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 9a12 12 0 0 1-12 12" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg></span>` +
+    `</div>`;
+  document.body.appendChild(el);
+  // 패널 위에 있으면 닫지 않도록 hover 추적(드래그 리사이즈용). 벗어나면 닫음.
+  el.addEventListener("mouseleave", () => scheduleCloseFollowPreview());
+  el.addEventListener("mouseenter", () => {
+    if (followPreviewState.hoverTimer) {
+      clearTimeout(followPreviewState.hoverTimer);
+      followPreviewState.hoverTimer = 0;
+    }
+  });
+  // 고정 핀 토글: 켜면 호버 벗어나도 유지(닫기 차단).
+  el.querySelector(".cheese-follow-preview-pin")?.addEventListener(
+    "click",
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setFollowPreviewPinned(!followPreviewState.pinned);
+    },
+  );
+  bindFollowPreviewResize(el);
+  bindFollowPreviewMove(el);
+  return el;
+}
+
+// 헤더 바를 드래그해 패널을 이동한다(핀 버튼 제외). 이동하면 movedPos에 좌표를
+// 저장해 같은 세션 동안 그 위치를 유지(닫으면 리셋). 드래그 중엔 닫기 차단.
+function bindFollowPreviewMove(el) {
+  const header = el.querySelector(".cheese-follow-preview-header");
+  if (!header) return;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let moving = false;
+  const onMove = (e) => {
+    if (!moving) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    let left = startLeft + (e.clientX - startX);
+    let top = startTop + (e.clientY - startY);
+    // 화면 안으로 클램프.
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    top = Math.max(8, Math.min(top, window.innerHeight - h - 8));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    followPreviewState.movedPos = { left, top };
+  };
+  const onUp = (e) => {
+    if (!moving) return;
+    moving = false;
+    followPreviewState.resizing = false; // 이동도 리사이즈와 같은 '닫기 차단' 플래그 공유
+    try {
+      header.releasePointerCapture?.(e.pointerId);
+    } catch {}
+    header.removeEventListener("pointermove", onMove);
+    header.removeEventListener("pointerup", onUp);
+    header.removeEventListener("pointercancel", onUp);
+  };
+  header.addEventListener("pointerdown", (e) => {
+    // 핀 버튼 클릭은 이동이 아님.
+    if (e.target?.closest?.(".cheese-follow-preview-pin")) return;
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    moving = true;
+    followPreviewState.resizing = true; // 드래그 동안 호버-닫기 차단
+    if (followPreviewState.hoverTimer) {
+      clearTimeout(followPreviewState.hoverTimer);
+      followPreviewState.hoverTimer = 0;
+    }
+    const r = el.getBoundingClientRect();
+    startLeft = r.left;
+    startTop = r.top;
+    startX = e.clientX;
+    startY = e.clientY;
+    try {
+      header.setPointerCapture?.(e.pointerId);
+    } catch {}
+    header.addEventListener("pointermove", onMove);
+    header.addEventListener("pointerup", onUp);
+    header.addEventListener("pointercancel", onUp);
+  });
+}
+
+function setFollowPreviewPinned(on) {
+  followPreviewState.pinned = on;
+  const el = document.getElementById(FOLLOW_PREVIEW_ID);
+  if (!el) return;
+  el.classList.toggle("is-pinned", on);
+  const btn = el.querySelector(".cheese-follow-preview-pin");
+  if (btn) {
+    btn.setAttribute("aria-pressed", String(on));
+    btn.setAttribute("aria-label", on ? "고정 해제" : "고정");
+    btn.setAttribute("title", on ? "고정 해제" : "고정");
+  }
+  // 고정 켜는 순간 대기 중 닫기 취소.
+  if (on && followPreviewState.hoverTimer) {
+    clearTimeout(followPreviewState.hoverTimer);
+    followPreviewState.hoverTimer = 0;
+  }
+}
+
+// 패널을 호버 요소 옆(치지직 툴팁 자리)에 fixed 배치. 기본은 우측, 사이드바가
+// 오른쪽 배치(sidebarRight)거나 우측 공간 부족이면 좌측에 둔다. 좌측 배치면 패널에
+// is-left 클래스 → 리사이즈 핸들이 좌하단으로 가고 드래그 방향도 반대가 된다.
+function positionFollowPreview(el, anchor) {
+  const r = anchor.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const GAP = 10;
+  const EDGE = 8;
+
+  // 드래그로 옮겼으면 그 위치 유지(저장 너비 그대로).
+  if (followPreviewState.movedPos) {
+    const w = followPreviewState.width;
+    el.style.width = `${w}px`;
+    el.style.height = "";
+    applyFollowPreviewWidthClass(el, w);
+    const totalH = el.offsetHeight || Math.round((w * 9) / 16) + 44;
+    let { left, top } = followPreviewState.movedPos;
+    left = Math.max(EDGE, Math.min(left, vw - w - EDGE));
+    top = Math.max(EDGE, Math.min(top, vh - totalH - EDGE));
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+    return;
+  }
+
+  // 앵커(li) 양옆의 가용 폭.
+  const rightSpace = vw - r.right - GAP - EDGE; // li 우측에 둘 때 쓸 수 있는 폭
+  const leftSpace = r.left - GAP - EDGE; // li 좌측에 둘 때 쓸 수 있는 폭
+  // 배치 쪽 판단은 **저장 너비가 아니라 '최소 너비가 들어가는가'** 기준.
+  // (큰 저장 너비로 판단하면, 우측을 줄여 넣을 수 있는데도 좌측=사이드바 위로 잘못 감.)
+  // 기본 우측, sidebarRight거나 우측에 최소폭도 안 들어가고 좌측이 더 넓을 때만 좌측.
+  let side; // true=좌측(is-left)
+  if (featureFlags.sidebarRight) side = true;
+  else if (rightSpace >= FOLLOW_PREVIEW_MIN_W)
+    side = false; // 우측에 최소폭 들어가면 우측
+  else side = leftSpace > rightSpace; // 우측 너무 좁으면 더 넓은 쪽
+  const space = side ? leftSpace : rightSpace;
+  // 표시 너비를 그 쪽 가용 폭으로 클램프(저장값은 보존, 표시만 축소).
+  const w = Math.max(
+    FOLLOW_PREVIEW_MIN_W,
+    Math.min(followPreviewState.width, Math.floor(space)),
+  );
+
+  el.style.width = `${w}px`;
+  el.style.height = "";
+  applyFollowPreviewWidthClass(el, w);
+  const totalH = el.offsetHeight || Math.round((w * 9) / 16) + 44;
+
+  let left = side ? r.left - w - GAP : r.right + GAP;
+  if (left < EDGE) left = EDGE;
+  if (left + w + EDGE > vw) left = vw - w - EDGE;
+  let top = r.top + r.height / 2 - totalH / 2;
+  top = Math.max(EDGE, Math.min(top, vh - totalH - EDGE));
+  el.classList.toggle("is-left", side);
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+}
+
+// 미리보기 시작: m3u8 받아 video에 연결(네이티브 우선, 폴백 hls.js).
+async function openFollowPreview(li, channelId) {
+  if (!followPreviewOn || document.hidden) return;
+  followPreviewState.currentChannelId = channelId;
+  followPreviewState.retried = false;
+  // 새 호버로 여는 것이므로 이전에 드래그로 옮긴 위치는 버리고 앵커 기준으로 재배치
+  // 한다(고정 중엔 호버로 안 열리니 movedPos가 안 남는다 — 이건 호버 신규 진입).
+  followPreviewState.movedPos = null;
+  const el = ensureFollowPreviewEl();
+  positionFollowPreview(el, li);
+  el.classList.add("is-loading");
+  el.classList.remove("is-ready");
+
+  const data = await fetchLivePreviewData(channelId);
+  // 그새 호버가 바뀌었으면 중단.
+  if (followPreviewState.currentChannelId !== channelId) return;
+  if (!data?.m3u8) {
+    closeFollowPreview();
+    return;
+  }
+  renderFollowPreviewMeta(el, data.meta);
+  attachFollowPreviewSource(el, data.m3u8, channelId);
+}
+
+// 경과 시간(ms 시작시각 → "HH:MM:SS", 시는 0패딩).
+function formatLiveElapsed(openAtMs) {
+  if (!openAtMs) return "";
+  let s = Math.floor((Date.now() - openAtMs) / 1000);
+  if (s < 0) s = 0;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(sec)}`;
+}
+
+// 메타 바 — 프로필 | (제목 / 채널명·인증·카테고리) | (현재 시청자 / 경과시간).
+function renderFollowPreviewMeta(el, meta) {
+  const bar = el.querySelector(".cheese-follow-preview-meta");
+  if (!bar || !meta) return;
+  const elapsed = formatLiveElapsed(meta.openAt);
+  const imageUrl = meta.channelImageUrl
+    ? `${meta.channelImageUrl}${meta.channelImageUrl.includes("?") ? "&" : "?"}type=f120_120_na`
+    : "";
+  bar.innerHTML =
+    // 1) 프로필
+    `<span class="cheese-follow-preview-meta-profile">` +
+    (imageUrl
+      ? `<img src="${escapeAttribute(imageUrl)}" alt="" loading="lazy" decoding="async">`
+      : "") +
+    `</span>` +
+    // 2) 중앙: 제목 + (채널명·인증·카테고리)
+    `<span class="cheese-follow-preview-meta-center">` +
+    (meta.title
+      ? `<strong class="cheese-follow-preview-meta-title">${escapeHtml(meta.title)}</strong>`
+      : "") +
+    `<span class="cheese-follow-preview-meta-sub">` +
+    `<span class="cheese-follow-preview-meta-name">${escapeHtml(meta.channelName)}</span>` +
+    (meta.verifiedMark
+      ? `<i class="cheese-follow-preview-meta-verified" aria-hidden="true"></i>`
+      : "") +
+    (meta.category
+      ? `<span class="cheese-follow-preview-meta-category">${escapeHtml(meta.category)}</span>`
+      : "") +
+    `</span>` +
+    `</span>` +
+    // 3) 우측: 현재 시청자 / 경과시간
+    `<span class="cheese-follow-preview-meta-side">` +
+    (meta.viewers
+      ? `<em class="cheese-follow-preview-meta-viewers">현재 ${escapeHtml(meta.viewers)}</em>`
+      : "") +
+    (elapsed
+      ? `<span class="cheese-follow-preview-meta-elapsed" data-open-at="${meta.openAt}"><b>${escapeHtml(elapsed)}</b> 스트리밍 중</span>`
+      : "") +
+    `</span>`;
+  startFollowPreviewElapsedTimer(el);
+}
+
+// 경과 시간을 1초마다 갱신(텍스트만). 패널 있을 때만 동작.
+function startFollowPreviewElapsedTimer(el) {
+  stopFollowPreviewElapsedTimer();
+  followPreviewState.elapsedTimer = setInterval(() => {
+    const span = el.querySelector(".cheese-follow-preview-meta-elapsed");
+    if (!span) return;
+    const openAt = Number(span.dataset.openAt);
+    if (!openAt) return;
+    const b = span.querySelector("b");
+    const next = formatLiveElapsed(openAt);
+    if (b && b.textContent !== next) b.textContent = next; // 시간 부분만 갱신
+  }, 1000);
+}
+
+function stopFollowPreviewElapsedTimer() {
+  if (followPreviewState.elapsedTimer) {
+    clearInterval(followPreviewState.elapsedTimer);
+    followPreviewState.elapsedTimer = 0;
+  }
+}
+
+function attachFollowPreviewSource(el, m3u8, channelId) {
+  const video = el.querySelector(".cheese-follow-preview-video");
+  if (!video) return;
+  teardownFollowPreviewMedia(video); // 이전 연결 정리
+  const onReady = () => {
+    if (followPreviewState.currentChannelId === channelId) {
+      el.classList.remove("is-loading");
+      el.classList.add("is-ready");
+    }
+  };
+  const onError = () => {
+    // 토큰 만료 등 → 캐시 무효화 후 1회 재시도.
+    if (followPreviewState.retried) return;
+    followPreviewState.retried = true;
+    followPreviewState.playbackCache.delete(channelId);
+    void (async () => {
+      const fresh = await fetchLivePreviewData(channelId);
+      if (fresh?.m3u8 && followPreviewState.currentChannelId === channelId) {
+        renderFollowPreviewMeta(el, fresh.meta);
+        attachFollowPreviewSource(el, fresh.m3u8, channelId);
+      }
+    })();
+  };
+  video.addEventListener("loadeddata", onReady, { once: true });
+  video.addEventListener("error", onError, { once: true });
+
+  // hls.js 우선: 네이티브 HLS는 ABR이 144p→점진 상승이라 초반 저화질이 오래간다.
+  // hls.js는 startLevel을 최고로 두면 처음부터 1080p로 시작한다(UX↑). hls.js가
+  // 불가능한 환경(드묾)에서만 네이티브 폴백.
+  if (typeof Hls !== "undefined" && Hls.isSupported()) {
+    const hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      startLevel: -1, // MANIFEST_PARSED에서 최고 레벨로 직접 지정
+      autoStartLoad: true,
+      capLevelToPlayerSize: false, // 작은 미리보기라도 고화질 시작 허용
+    });
+    followPreviewState.hls = hls;
+    hls.on(Hls.Events.ERROR, (_e, data) => {
+      if (data?.fatal) onError();
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, (_e, data) => {
+      // 가장 높은 화질로 시작(레벨 인덱스가 클수록 보통 고화질).
+      const levels = data?.levels || hls.levels || [];
+      if (levels.length) {
+        let best = 0;
+        let bestH = -1;
+        levels.forEach((lv, i) => {
+          const hgt = lv?.height || 0;
+          if (hgt >= bestH) {
+            bestH = hgt;
+            best = i;
+          }
+        });
+        hls.startLevel = best;
+        hls.currentLevel = best; // 즉시 그 화질로
+      }
+      video.play?.().catch(() => {});
+    });
+    hls.loadSource(m3u8);
+    hls.attachMedia(video);
+  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    // 네이티브 폴백(화질 제어 제한 — ABR이 점진 상승할 수 있음).
+    video.src = m3u8;
+    video.play?.().catch(() => {});
+  } else {
+    closeFollowPreview();
+  }
+}
+
+// video/hls 연결 해제(스트림 끊기).
+function teardownFollowPreviewMedia(video) {
+  if (followPreviewState.hls) {
+    try {
+      followPreviewState.hls.destroy();
+    } catch {}
+    followPreviewState.hls = null;
+  }
+  if (video) {
+    try {
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    } catch {}
+  }
+}
+
+function closeFollowPreview() {
+  followPreviewState.currentChannelId = "";
+  followPreviewState.resizing = false;
+  followPreviewState.pinned = false;
+  followPreviewState.movedPos = null;
+  stopFollowPreviewElapsedTimer();
+  if (followPreviewState.hoverTimer) {
+    clearTimeout(followPreviewState.hoverTimer);
+    followPreviewState.hoverTimer = 0;
+  }
+  const el = document.getElementById(FOLLOW_PREVIEW_ID);
+  if (!el) return;
+  const video = el.querySelector(".cheese-follow-preview-video");
+  teardownFollowPreviewMedia(video);
+  el.remove();
+}
+
+// 잠깐의 유예 후 닫기(li↔패널 사이 이동 시 깜빡임 방지). 드래그 리사이즈 중엔
+// 마우스가 패널 밖으로 나가도 닫지 않는다(드래그 중 화면 꺼짐 버그 방지).
+function scheduleCloseFollowPreview() {
+  if (followPreviewState.resizing || followPreviewState.pinned) return;
+  if (followPreviewState.hoverTimer)
+    clearTimeout(followPreviewState.hoverTimer);
+  followPreviewState.hoverTimer = setTimeout(() => {
+    followPreviewState.hoverTimer = 0;
+    if (followPreviewState.resizing || followPreviewState.pinned) return;
+    closeFollowPreview();
+  }, 120);
+}
+
+// 드래그 리사이즈. 우측 배치면 우하단 핸들을 오른쪽으로 끌수록 커지고, 좌측 배치
+// (is-left)면 좌하단 핸들을 왼쪽으로 끌수록 커진다(패널 우측 가장자리 고정). width만
+// 조절, height는 16:9 연동. 저장.
+function bindFollowPreviewResize(el) {
+  const handle = el.querySelector(".cheese-follow-preview-resize");
+  if (!handle) return;
+  let startX = 0;
+  let startW = 0;
+  let startRight = 0; // 좌측 배치 시 고정할 우측 가장자리
+  let leftMode = false;
+  let dragging = false;
+  const onMove = (e) => {
+    if (!dragging) return;
+    // 좌측 배치면 왼쪽으로 끌수록(델타 음수) 커지므로 부호 반전.
+    const delta = leftMode ? startX - e.clientX : e.clientX - startX;
+    const w = Math.round(
+      Math.max(
+        FOLLOW_PREVIEW_MIN_W,
+        Math.min(FOLLOW_PREVIEW_MAX_W, startW + delta),
+      ),
+    );
+    followPreviewState.width = w;
+    el.style.width = `${w}px`; // 높이는 CSS(헤더 auto + body 16:9)가 처리
+    applyFollowPreviewWidthClass(el, w); // 좁아지면 우측 메타 숨김
+    // 좌측 배치면 우측 가장자리를 고정(왼쪽으로 확장).
+    if (leftMode) el.style.left = `${Math.max(8, startRight - w)}px`;
+  };
+  const onUp = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    followPreviewState.resizing = false;
+    try {
+      handle.releasePointerCapture?.(e.pointerId);
+    } catch {}
+    handle.removeEventListener("pointermove", onMove);
+    handle.removeEventListener("pointerup", onUp);
+    handle.removeEventListener("pointercancel", onUp);
+    saveFollowPreviewSize();
+  };
+  // Pointer Events + setPointerCapture: 영상 컨트롤 위에서 손을 떼도 up 이벤트가
+  // 핸들에 확실히 도달한다(mousedown/mouseup만 쓰면 video controls가 가로채 드래그가
+  // 안 끝나고 추가 클릭이 필요했던 버그 해결).
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    followPreviewState.resizing = true;
+    if (followPreviewState.hoverTimer) {
+      clearTimeout(followPreviewState.hoverTimer);
+      followPreviewState.hoverTimer = 0;
+    }
+    startX = e.clientX;
+    startW = followPreviewState.width;
+    leftMode = el.classList.contains("is-left");
+    startRight = el.getBoundingClientRect().right; // 좌측 확장 시 고정점
+    try {
+      handle.setPointerCapture?.(e.pointerId);
+    } catch {}
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+    handle.addEventListener("pointercancel", onUp);
+  });
+}
+
+function saveFollowPreviewSize() {
+  try {
+    chrome.storage?.local?.set({
+      [FOLLOW_PREVIEW_SIZE_KEY]: { w: followPreviewState.width },
+    });
+  } catch {}
+}
+
+// 호버 대상에서 미리보기 앵커({anchor, channelId})를 찾는다. 두 출처:
+//  1) 사이드바 팔로잉 섹션의 라이브 li
+//  2) 헤더 미니 팔로우 네비 아이템(li.cheese-header-follow-item[data-channel-id])
+function getFollowPreviewAnchor(target) {
+  const t = target?.closest?.(
+    'aside#sidebar nav[class*="_section_"] li, .cheese-header-follow-item',
+  );
+  if (!t) return null;
+  if (t.classList.contains("cheese-header-follow-item")) {
+    // 헤더 팔로우 아이템은 모두 라이브(우리가 라이브만 렌더). data-channel-id 사용.
+    const channelId = t.dataset.channelId || "";
+    return channelId ? { anchor: t, channelId } : null;
+  }
+  // 사이드바: 팔로잉 섹션 + 라이브만.
+  const nav = t.closest('nav[class*="_section_"]');
+  if (!nav || !getSidebarNavLabel(nav).includes("팔로")) return null;
+  if (!isLiveFollowItem(t)) return null;
+  const channelId = getFollowItemChannelId(t);
+  return channelId ? { anchor: t, channelId } : null;
+}
+
+// 위임 호버. 라이브 팔로잉(사이드바/헤더) 진입 → 디바운스 후 미리보기.
+function onFollowPreviewMouseOver(e) {
+  if (!followPreviewOn || document.hidden) return;
+  // 드래그/고정 중엔 다른 채널로 전환하지 않는다.
+  if (followPreviewState.resizing || followPreviewState.pinned) return;
+  const found = getFollowPreviewAnchor(e.target);
+  if (!found) return;
+  if (found.channelId === followPreviewState.currentChannelId) return; // 이미 표시 중
+  if (followPreviewState.hoverTimer)
+    clearTimeout(followPreviewState.hoverTimer);
+  followPreviewState.hoverTimer = setTimeout(() => {
+    followPreviewState.hoverTimer = 0;
+    openFollowPreview(found.anchor, found.channelId);
+  }, FOLLOW_PREVIEW_HOVER_DELAY_MS);
+}
+
+function onFollowPreviewMouseOut(e) {
+  // 앵커를 벗어나 패널/외부로 가면 닫기 예약(패널 진입은 mouseenter가 취소).
+  const toEl = e.relatedTarget;
+  if (toEl && toEl.closest?.(`#${FOLLOW_PREVIEW_ID}`)) return; // 패널로 이동
+  if (!getFollowPreviewAnchor(e.target)) return;
+  scheduleCloseFollowPreview();
+}
+
+// 고정된 미리보기는 패널 밖을 클릭하면 닫는다(호버 외 닫기 수단).
+function onFollowPreviewDocClick(e) {
+  if (!followPreviewState.pinned) return;
+  if (e.target?.closest?.(`#${FOLLOW_PREVIEW_ID}`)) return; // 패널 내부 클릭은 유지
+  if (getFollowPreviewAnchor(e.target)) return; // 팔로우 아이템 클릭(이동)은 그대로
+  closeFollowPreview();
+}
+
+function bindFollowPreviewHover() {
+  if (followPreviewState.bound) return;
+  followPreviewState.bound = true;
+  document.addEventListener("mouseover", onFollowPreviewMouseOver, {
+    passive: true,
+  });
+  document.addEventListener("mouseout", onFollowPreviewMouseOut, {
+    passive: true,
+  });
+  document.addEventListener("click", onFollowPreviewDocClick, true);
+}
+
+async function loadFollowPreview() {
+  if (!chrome.storage?.local) return;
+  try {
+    const data = await chrome.storage.local.get([
+      FOLLOW_PREVIEW_KEY,
+      FOLLOW_PREVIEW_SIZE_KEY,
+    ]);
+    followPreviewOn = data?.[FOLLOW_PREVIEW_KEY] !== false; // 미설정/true=ON
+    const size = data?.[FOLLOW_PREVIEW_SIZE_KEY];
+    const w = Number(size?.w);
+    if (Number.isFinite(w)) {
+      followPreviewState.width = Math.max(
+        FOLLOW_PREVIEW_MIN_W,
+        Math.min(FOLLOW_PREVIEW_MAX_W, w),
+      );
+    }
+  } catch {}
+  if (followPreviewOn) bindFollowPreviewHover();
+  else closeFollowPreview();
+}
+
+// ── 라이브 탐색 카드 호버 미리보기 음소거 토글(우클릭) ─────────────────────
+// 치지직이 카드(a[href^="/live/"]) 호버 시 주입하는 음소거 video(.webplayer-internal-
+// video) 위에서 **우클릭**하면 음소거를 토글한다. 버튼 오버레이는 두지 않는다 —
+// video 부모는 React DOM이라 버튼 주입 시 무한 재렌더, body 오버레이는 마우스가
+// 카드를 벗어난 것으로 판정돼 치지직이 미리보기를 멈춘다. 우클릭은 카드 위에 마우스가
+// 머문 채라 미리보기가 안 멈추고, 네비게이션도 안 유발해 capture로 안정적이다.
+const CARD_PREVIEW_VIDEO_SEL = "video.webplayer-internal-video";
+let cardPreviewBound = false;
+
+// 카드 미리보기 video인지(우리 미리보기/플레이어 PIP 제외). 카드 링크 안의 것만.
+function isCardPreviewVideo(v) {
+  if (!v || !v.matches?.(CARD_PREVIEW_VIDEO_SEL)) return false;
+  if (v.closest("#cheese-follow-preview")) return false;
+  if (v.closest(".pzp")) return false; // 메인 플레이어/PIP 제외
+  return Boolean(v.closest('a[href^="/live/"]'));
+}
+
+// document capture 우클릭: 카드 미리보기 video 위면 기본 메뉴 막고 음소거 토글.
+// 이벤트 지점의 카드 미리보기 video를 찾는다(target 직접 또는 카드 안의 video).
+function cardPreviewVideoAtEvent(e) {
+  if (
+    e.target?.matches?.(CARD_PREVIEW_VIDEO_SEL) &&
+    isCardPreviewVideo(e.target)
+  )
+    return e.target;
+  const card = e.target?.closest?.('a[href^="/live/"]');
+  const v = card?.querySelector?.(CARD_PREVIEW_VIDEO_SEL);
+  return v && isCardPreviewVideo(v) ? v : null;
+}
+
+// 우클릭: 카드 미리보기 video 위면 기본 메뉴 막고 음소거 토글.
+function onCardPreviewContextCapture(e) {
+  if (!cardPreviewAudioOn) return;
+  const video = cardPreviewVideoAtEvent(e);
+  if (!video) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  video.muted = !video.muted;
+  if (!video.muted && video.volume === 0) video.volume = 1;
+}
+
+// 휠: 카드 미리보기 video 위면 음량 ±5%(올리면 자동 음소거 해제). 페이지 스크롤 막음.
+const CARD_PREVIEW_WHEEL_STEP = 0.05;
+function onCardPreviewWheelCapture(e) {
+  if (!cardPreviewAudioOn) return;
+  const video = cardPreviewVideoAtEvent(e);
+  if (!video) return;
+  e.preventDefault(); // 페이지 스크롤 차단
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  const dir = e.deltaY < 0 ? 1 : -1; // 위로=증가
+  let vol =
+    (Number.isFinite(video.volume) ? video.volume : 1) +
+    dir * CARD_PREVIEW_WHEEL_STEP;
+  vol = Math.max(0, Math.min(1, Math.round(vol * 100) / 100));
+  video.volume = vol;
+  // 음량을 올리면 자동 음소거 해제, 0으로 내리면 음소거.
+  if (dir > 0 && video.muted) video.muted = false;
+  if (vol === 0) video.muted = true;
+}
+
+// 조작 안내(우클릭=음소거, 휠=음량)를 **커스텀 툴팁**으로 표시. title 속성은 표시/
+// 숨김 타이밍을 브라우저가 제어해 '잠깐 떴다 사라짐'이 안 됐다(나타남 지연 + 호버 중
+// 안 닫힘). body 직속 div(pointer-events:none)라 마우스 이벤트를 안 가로채 미리보기가
+// 안 멈춘다. 미리보기 video가 실제 있는 카드에만, 세션당 1회, N초 뒤 페이드아웃.
+const CARD_HINT_ID = "cheese-card-hint";
+const CARD_HINT_TEXT = "우클릭: 음소거 / 토글 · 마우스 휠: 음량 조절";
+const CARD_HINT_SHOW_MS = 3000; // 표시 후 이 시간 뒤 사라짐
+let cardPreviewHoverCard = null; // 현재 호버 중인 카드(세션당 1회)
+let cardHintPollTimer = 0; // video 생성 폴링
+let cardHintHideTimer = 0; // 자동 숨김
+
+function ensureCardHintEl() {
+  let el = document.getElementById(CARD_HINT_ID);
+  if (el) return el;
+  el = document.createElement("div");
+  el.id = CARD_HINT_ID;
+  el.textContent = CARD_HINT_TEXT;
+  document.body.appendChild(el);
+  return el;
+}
+
+function hideCardHint() {
+  if (cardHintPollTimer) {
+    clearTimeout(cardHintPollTimer);
+    cardHintPollTimer = 0;
+  }
+  if (cardHintHideTimer) {
+    clearTimeout(cardHintHideTimer);
+    cardHintHideTimer = 0;
+  }
+  document.getElementById(CARD_HINT_ID)?.classList.remove("is-visible");
+}
+
+// 카드에 미리보기 video가 있으면 그 카드 우상단에 툴팁 표시(없으면 폴링).
+function tryShowCardHint(card, tries) {
+  cardHintPollTimer = 0;
+  if (!cardPreviewAudioOn || !card.isConnected || card !== cardPreviewHoverCard)
+    return;
+  const v = card.querySelector(CARD_PREVIEW_VIDEO_SEL);
+  if (v && isCardPreviewVideo(v)) {
+    const el = ensureCardHintEl();
+    const r = v.getBoundingClientRect();
+    // video 상단 중앙에 배치(가로 중앙, 위에서 살짝 안쪽).
+    el.style.top = `${Math.round(r.top + 10)}px`;
+    el.style.left = `${Math.round(r.left + r.width / 2)}px`;
+    el.classList.add("is-visible");
+    // N초 뒤 페이드아웃(호버 유지해도 다시 안 띄움 = 세션당 1회).
+    cardHintHideTimer = setTimeout(() => {
+      cardHintHideTimer = 0;
+      el.classList.remove("is-visible");
+    }, CARD_HINT_SHOW_MS);
+    return;
+  }
+  if (tries > 0) {
+    cardHintPollTimer = setTimeout(() => tryShowCardHint(card, tries - 1), 150);
+  }
+}
+
+function onCardPreviewMouseOver(e) {
+  if (!cardPreviewAudioOn) return;
+  const card = e.target?.closest?.('a[href^="/live/"]');
+  // 메인 플레이어/우리 미리보기 안의 링크는 제외.
+  if (card && (card.closest(".pzp") || card.closest("#cheese-follow-preview")))
+    return;
+  if (card === cardPreviewHoverCard) return; // 같은 카드 계속 호버 → 그대로
+  hideCardHint(); // 다른 카드/이탈 → 이전 툴팁·타이머 정리
+  cardPreviewHoverCard = card || null;
+  if (card) tryShowCardHint(card, 10); // ~1.5초 폴링 후 표시
+}
+
+function bindCardPreviewAudio() {
+  if (cardPreviewBound) return;
+  cardPreviewBound = true;
+  // capture로 치지직 기본 우클릭 메뉴/핸들러보다 먼저 선점.
+  document.addEventListener("contextmenu", onCardPreviewContextCapture, true);
+  // wheel은 passive:false라야 preventDefault로 페이지 스크롤을 막을 수 있다.
+  document.addEventListener("wheel", onCardPreviewWheelCapture, {
+    capture: true,
+    passive: false,
+  });
+  // 안내 툴팁(미리보기 있는 카드 진입 시).
+  document.addEventListener("mouseover", onCardPreviewMouseOver, {
+    passive: true,
+  });
+}
+
+function unbindCardPreviewAudio() {
+  cardPreviewBound = false;
+  document.removeEventListener(
+    "contextmenu",
+    onCardPreviewContextCapture,
+    true,
+  );
+  document.removeEventListener("wheel", onCardPreviewWheelCapture, {
+    capture: true,
+  });
+  document.removeEventListener("mouseover", onCardPreviewMouseOver);
+  hideCardHint();
+  document.getElementById(CARD_HINT_ID)?.remove();
+  cardPreviewHoverCard = null;
+}
+
+async function loadCardPreviewAudio() {
+  if (!chrome.storage?.local) return;
+  try {
+    const data = await chrome.storage.local.get(CARD_PREVIEW_AUDIO_KEY);
+    cardPreviewAudioOn = data?.[CARD_PREVIEW_AUDIO_KEY] !== false; // 미설정/true=ON
+  } catch {}
+  if (cardPreviewAudioOn) bindCardPreviewAudio();
+  else unbindCardPreviewAudio();
 }
 
 // 헤더 전담 옵저버(미니 네비가 React 재렌더로 사라지면 즉시 복구).
@@ -7832,6 +8657,25 @@ if (chrome.storage?.onChanged) {
       channelLiveButtonEnd =
         changes[CHANNEL_LIVE_BUTTON_END_KEY].newValue !== false;
       ensureChannelLiveButton();
+    }
+    if (changes[FOLLOW_PREVIEW_KEY]) {
+      followPreviewOn = changes[FOLLOW_PREVIEW_KEY].newValue !== false;
+      if (followPreviewOn) bindFollowPreviewHover();
+      else closeFollowPreview();
+    }
+    if (changes[CARD_PREVIEW_AUDIO_KEY]) {
+      cardPreviewAudioOn = changes[CARD_PREVIEW_AUDIO_KEY].newValue !== false;
+      if (cardPreviewAudioOn) bindCardPreviewAudio();
+      else unbindCardPreviewAudio();
+    }
+    if (changes[FOLLOW_PREVIEW_SIZE_KEY]) {
+      const w = Number(changes[FOLLOW_PREVIEW_SIZE_KEY].newValue?.w);
+      if (Number.isFinite(w)) {
+        followPreviewState.width = Math.max(
+          FOLLOW_PREVIEW_MIN_W,
+          Math.min(FOLLOW_PREVIEW_MAX_W, w),
+        );
+      }
     }
     if (changes[FEATURE_HIDDEN_KEY]) {
       applyFeatureFlags(changes[FEATURE_HIDDEN_KEY].newValue); // broadcast 포함
@@ -8403,6 +9247,8 @@ void loadFeatureFlags();
 void loadFollowRefresh();
 void loadHeaderNav();
 void loadChannelLiveButton();
+void loadFollowPreview();
+void loadCardPreviewAudio();
 
 // MAIN world 스크립트가 로드 후 플래그를 요청하면 현재 값을 보내준다(레이스 방지).
 window.addEventListener("message", (event) => {
@@ -8466,16 +9312,13 @@ window.addEventListener("message", (event) => {
 // 중계하고(콘텐츠는 chrome.tabs.update 못 씀), 응답(muted)을 MAIN world로 돌려준다.
 function sendTabMute(action) {
   try {
-    chrome.runtime.sendMessage(
-      { type: "CHEESE_TAB_MUTE", action },
-      (resp) => {
-        if (chrome.runtime.lastError || !resp?.ok) return;
-        window.postMessage(
-          { source: "cheese-tab-mute-content", muted: resp.muted === true },
-          location.origin,
-        );
-      },
-    );
+    chrome.runtime.sendMessage({ type: "CHEESE_TAB_MUTE", action }, (resp) => {
+      if (chrome.runtime.lastError || !resp?.ok) return;
+      window.postMessage(
+        { source: "cheese-tab-mute-content", muted: resp.muted === true },
+        location.origin,
+      );
+    });
   } catch {}
 }
 

@@ -2773,3 +2773,306 @@
     transform: scale(1);
   }
 }
+
+/* 사이드바 팔로잉 채널 호버 라이브 영상 미리보기 패널 */
+/* 패널 = 세로(헤더 바 + 영상 본문). 위치/폭은 JS가 인라인, 높이는 auto. */
+#cheese-follow-preview {
+  position: fixed;
+  z-index: 2147483600;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #0e0e10;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+
+/* 헤더 바(영상과 분리): 메타 + 고정 핀 */
+#cheese-follow-preview .cheese-follow-preview-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 8px 10px 12px;
+  background: #16161a;
+  color: #fff;
+  cursor: grab; /* 헤더 드래그로 패널 이동 */
+  user-select: none;
+}
+
+#cheese-follow-preview .cheese-follow-preview-header:active {
+  cursor: grabbing;
+}
+
+/* 핀 버튼은 이동 커서가 아니라 포인터 */
+#cheese-follow-preview .cheese-follow-preview-pin {
+  cursor: pointer;
+}
+
+/* 메타 = 프로필 | 중앙(제목/채널명·인증·카테고리) | 우측(시청자/경과시간) */
+#cheese-follow-preview .cheese-follow-preview-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 로딩 중엔 메타 비움(텍스트 깜빡임 방지) */
+#cheese-follow-preview.is-loading .cheese-follow-preview-meta {
+  visibility: hidden;
+}
+
+/* 프로필(라이브 링 테두리) */
+#cheese-follow-preview .cheese-follow-preview-meta-profile {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  padding: 2px;
+  background: #00ffa3;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-profile img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  background: #000;
+  border: 2px solid #16161a;
+}
+
+/* 중앙: 제목(위) + 채널명·인증·카테고리(아래) */
+#cheese-follow-preview .cheese-follow-preview-meta-center {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-name {
+  flex: none;
+  max-width: 50%;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-verified {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  background: url("https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png")
+    50% / cover no-repeat;
+}
+
+/* 카테고리 pill */
+#cheese-follow-preview .cheese-follow-preview-meta-category {
+  flex: none;
+  max-width: 45%;
+  padding: 2px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.88);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 우측: 현재 시청자(레드) / 경과시간 */
+#cheese-follow-preview .cheese-follow-preview-meta-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  text-align: right;
+}
+
+/* 패널이 좁으면(320px 미만) 우측 메타(시청자/경과시간) 숨김 */
+#cheese-follow-preview.is-narrow .cheese-follow-preview-meta-side {
+  display: none;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-viewers {
+  font-size: 13px;
+  font-weight: 800;
+  font-style: normal;
+  color: #ff5454;
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-elapsed {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+#cheese-follow-preview .cheese-follow-preview-meta-elapsed b {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 고정 핀 버튼 */
+#cheese-follow-preview .cheese-follow-preview-pin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+#cheese-follow-preview .cheese-follow-preview-pin svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+#cheese-follow-preview .cheese-follow-preview-pin:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+#cheese-follow-preview.is-pinned .cheese-follow-preview-pin {
+  color: #00ffa3;
+  background: rgba(0, 255, 163, 0.14);
+}
+
+/* 영상 본문: 16:9. 폭 100%, 비율로 높이 결정 */
+#cheese-follow-preview .cheese-follow-preview-body {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+#cheese-follow-preview .cheese-follow-preview-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* 로딩 중엔 video 가리고 3-dot 펄스 표시 */
+#cheese-follow-preview.is-loading .cheese-follow-preview-video {
+  visibility: hidden;
+}
+
+#cheese-follow-preview .cheese-follow-preview-loading {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+#cheese-follow-preview.is-loading .cheese-follow-preview-loading {
+  display: flex;
+}
+
+#cheese-follow-preview .cheese-follow-preview-loading i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.85);
+  animation: cheese-clb-pulse 1s ease-in-out infinite;
+}
+
+#cheese-follow-preview .cheese-follow-preview-loading i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+#cheese-follow-preview .cheese-follow-preview-loading i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* 드래그 리사이즈 핸들 — 아크(곡선) 아이콘. 본문 우하단, 좌측 배치 시 좌하단. */
+#cheese-follow-preview .cheese-follow-preview-resize {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  left: auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: nwse-resize;
+  z-index: 3;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
+
+#cheese-follow-preview .cheese-follow-preview-resize svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 좌측 배치: 핸들을 좌하단으로, 아이콘은 좌우 반전, 커서 방향도 반대 */
+#cheese-follow-preview.is-left .cheese-follow-preview-resize {
+  right: auto;
+  left: 4px;
+  cursor: nesw-resize;
+  transform: scaleX(-1);
+}
+
+/* 카드 미리보기 조작 안내 커스텀 툴팁(body 직속, pointer-events:none).
+   위치는 JS가 인라인 지정(video 상단 가로 중앙 기준 transform으로 중앙 정렬). */
+#cheese-card-hint {
+  position: fixed;
+  z-index: 2147483600;
+  transform: translateX(-50%) translateY(-2px);
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+#cheese-card-hint.is-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

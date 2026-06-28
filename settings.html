@@ -151,7 +151,8 @@
                 <label>
                   <span class="settings-item-name">오디오 믹서 항상 켜기</span>
                   <span class="settings-item-desc"
-                    >페이지에서 첫 조작 시 믹서 자동 활성화(충돌 시 자동 해제)</span
+                    >페이지에서 첫 조작 시 믹서 자동 활성화(충돌 시 자동
+                    해제)</span
                   >
                 </label>
                 <label class="settings-switch">
@@ -204,6 +205,21 @@
                 </label>
                 <label class="settings-switch">
                   <input type="checkbox" data-feature="tabMute" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name"
+                    >카드 미리보기 음소거·음량</span
+                  >
+                  <span class="settings-item-desc"
+                    >라이브 카드 미리보기 위에서 우클릭=음소거 / 토글, 휠=음량
+                    조절(체크=사용)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-card-preview-audio />
                   <i aria-hidden="true"></i>
                 </label>
               </li>
@@ -489,7 +505,11 @@
                 커스텀
               </button>
             </div>
-            <div class="settings-custom-row" id="headerFollowCountCustomRow" hidden>
+            <div
+              class="settings-custom-row"
+              id="headerFollowCountCustomRow"
+              hidden
+            >
               <label class="settings-custom-field">
                 <span>표시 개수</span>
                 <span class="settings-custom-input">
@@ -506,8 +526,8 @@
               </label>
             </div>
             <p class="settings-group-desc">
-              사이드바와 주제 탭을 함께 숨겼을 때 헤더에 한 번에 표시할
-              팔로우 라이브 채널 수를 정합니다.
+              사이드바와 주제 탭을 함께 숨겼을 때 헤더에 한 번에 표시할 팔로우
+              라이브 채널 수를 정합니다.
             </p>
           </section>
 
@@ -766,6 +786,32 @@
               새로고침해 라이브 상태를 갱신합니다(접힘 상태에선 동작하지
               않습니다). 커스텀은 3~600초이며, 10초 이하로 설정하면 호출 제한을
               피해 설정값과 설정값~10초 랜덤을 번갈아 호출합니다.
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="sidebar"
+            aria-label="팔로잉 미리보기"
+          >
+            <h2 class="settings-group-title">팔로잉 라이브 미리보기</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">라이브 영상 미리보기</span>
+                  <span class="settings-item-desc"
+                    >라이브 중인 팔로잉 채널에 마우스를 올리면 음소거 영상
+                    표시(체크=표시)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-follow-preview />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
+            <p class="settings-group-desc">
+              미리보기 우하단을 드래그해 크기를 조절할 수 있습니다.
             </p>
           </section>
 

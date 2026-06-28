@@ -3994,23 +3994,50 @@
     return Number.isFinite(scale) ? Math.round(scale * 100) : 0;
   }
 
-  let volumeTooltipHovering = false; // 마우스가 슬라이더 위에 있는지
+  // ── 볼륨 슬라이더 % 툴팁(위임 방식) ────────────────────────────────────────
+  // native 볼륨 슬라이더는 평소 폭 0(접힘)이라 슬라이더에 직접 리스너를 붙이면
+  // 마우스가 못 올라가 툴팁이 간헐적으로 안 떴다(버그). 그래서 **볼륨 컨트롤 래퍼
+  // (.pzp-pc__volume-control, 음소거 버튼 포함이라 크기 안정)** 위 이벤트를
+  // document 위임으로 받고, 툴팁/MutationObserver는 ensureVolumeTooltip이 래퍼에
+  // 멱등 보장한다(슬라이더 재생성과 무관하게 항상 동작).
+  let volumeTooltipHovering = false; // 마우스가 볼륨 컨트롤 위에 있는지
 
-  // 텍스트만 갱신(표시 상태/transition은 건드리지 않음 → 떨림 방지).
-  function setVolumeTooltipText(slider, tip) {
+  // 우리 게인 컨트롤이 아닌 native 볼륨 컨트롤 래퍼를 찾는다(이벤트 target 기준).
+  function nativeVolumeWrapOf(target) {
+    const wrap = target?.closest?.(".pzp-pc__volume-control");
+    if (!wrap || wrap.classList.contains(CONTROL_CLASS)) return null;
+    if (!findPlayer()?.contains(wrap)) return null;
+    return wrap;
+  }
+
+  function volumeTipOf(wrap) {
+    return wrap?.querySelector?.(`.${VOLUME_TOOLTIP_CLASS}:not(.cheese-gain-tooltip)`) || null;
+  }
+  function sliderOf(wrap) {
+    return (
+      wrap?.querySelector?.(
+        ".pzp-pc__volume-slider:not([data-master-gain])",
+      ) || null
+    );
+  }
+
+  function setVolumeTooltipText(wrap) {
+    const tip = volumeTipOf(wrap);
+    const slider = sliderOf(wrap);
+    if (!tip || !slider) return;
     const next = `${volumePercentOf(slider)}%`;
     if (tip.textContent !== next) tip.textContent = next;
   }
 
-  // 툴팁을 띄운다. 이미 보이는 중이면 is-visible을 다시 붙이지 않아 transform
-  // transition이 재시작되지 않는다(위아래 떨림의 원인 제거).
-  function showVolumeTooltip(slider, tip) {
-    setVolumeTooltipText(slider, tip);
+  // 이미 보이는 중이면 is-visible 재부여 안 함(transform transition 재시작 방지=떨림).
+  function showVolumeTooltip(wrap) {
+    const tip = volumeTipOf(wrap);
+    if (!tip) return;
+    setVolumeTooltipText(wrap);
     if (!tip.classList.contains("is-visible")) tip.classList.add("is-visible");
     scheduleVolumeTooltipHide(tip);
   }
 
-  // 호버 중이 아닐 때만 자동 숨김 타이머를 건다. 호버 중이면 계속 표시.
   function scheduleVolumeTooltipHide(tip) {
     if (volumeTooltipHideTimer) {
       clearTimeout(volumeTooltipHideTimer);
@@ -4023,52 +4050,69 @@
     }, VOLUME_TOOLTIP_HIDE_MS);
   }
 
+  // 툴팁 span + aria-valuenow 옵저버를 native 볼륨 래퍼에 멱등 보장.
   function ensureVolumeTooltip() {
     const slider = findNativeVolumeSlider();
     if (!slider) return;
-    // 이미 부착돼 있으면 재부착하지 않는다(멱등).
-    if (slider.dataset.cheeseVolTip === "1") return;
-    slider.dataset.cheeseVolTip = "1";
-
-    const tip = document.createElement("span");
-    tip.className = VOLUME_TOOLTIP_CLASS;
-    // 슬라이더가 아니라 '볼륨 컨트롤 래퍼(.pzp-pc__volume-control)'에 절대배치한다.
-    // 음소거 버튼 native 툴팁이 뜨면 형제인 슬라이더가 잠깐 위로 밀려, 슬라이더
-    // 기준으로 두면 우리 툴팁도 함께 출렁였다(요청 버그). 래퍼는 하단 버튼 바의
-    // flex 아이템이라 세로 위치가 안정적이므로 기준을 래퍼로 옮겨 영향을 끊는다.
     const anchor = slider.closest(".pzp-pc__volume-control") || slider;
+    if (anchor.dataset.cheeseVolTip === "1" && volumeTipOf(anchor)) return;
+    anchor.dataset.cheeseVolTip = "1";
+    // 래퍼에 절대배치(슬라이더는 폭 0이고 native 툴팁에 밀려 출렁이므로 래퍼 기준).
     if (getComputedStyle(anchor).position === "static") {
       anchor.style.position = "relative";
     }
-    anchor.appendChild(tip);
-
-    // 호버 동안엔 계속 표시. mouseenter로 켜고 mouseleave로 끈다.
-    slider.addEventListener("mouseenter", () => {
-      volumeTooltipHovering = true;
-      showVolumeTooltip(slider, tip);
-    });
-    slider.addEventListener("mouseleave", () => {
-      volumeTooltipHovering = false;
-      scheduleVolumeTooltipHide(tip); // 벗어나면 그때 숨김 예약
-    });
-    // 드래그 중엔 텍스트만 갱신(표시 토글 안 함 → 떨림 없음).
-    slider.addEventListener("pointerdown", () => showVolumeTooltip(slider, tip));
-    slider.addEventListener("pointermove", (e) => {
-      if (e.buttons) setVolumeTooltipText(slider, tip);
-    });
-    // 키보드/휠 조작은 호버 아닐 수도 있으니 표시 + (호버 아니면)숨김 예약.
-    slider.addEventListener("keydown", () => showVolumeTooltip(slider, tip));
-    slider.addEventListener("wheel", () => showVolumeTooltip(slider, tip), {
-      passive: true,
-    });
+    let tip = volumeTipOf(anchor);
+    if (!tip) {
+      tip = document.createElement("span");
+      tip.className = VOLUME_TOOLTIP_CLASS;
+      anchor.appendChild(tip);
+    }
     // aria-valuenow가 바뀌는 동안(=조작 중) 텍스트만 라이브 갱신.
     const obs = new MutationObserver(() => {
-      if (tip.classList.contains("is-visible")) setVolumeTooltipText(slider, tip);
+      if (tip.classList.contains("is-visible")) setVolumeTooltipText(anchor);
     });
-    obs.observe(slider, {
-      attributes: true,
-      attributeFilter: ["aria-valuenow"],
+    obs.observe(slider, { attributes: true, attributeFilter: ["aria-valuenow"] });
+  }
+
+  // ── document 위임 리스너(1회 등록) ──────────────────────────────────────────
+  function onVolumePointerOver(e) {
+    const wrap = nativeVolumeWrapOf(e.target);
+    if (!wrap) return;
+    volumeTooltipHovering = true;
+    ensureVolumeTooltip();
+    showVolumeTooltip(wrap);
+  }
+  function onVolumePointerOut(e) {
+    const wrap = nativeVolumeWrapOf(e.target);
+    if (!wrap) return;
+    // 같은 래퍼 안으로의 이동은 무시(여전히 호버 중).
+    if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
+    volumeTooltipHovering = false;
+    scheduleVolumeTooltipHide(volumeTipOf(wrap));
+  }
+  function onVolumePointerMove(e) {
+    if (!e.buttons) return; // 드래그 중에만 텍스트 갱신
+    const wrap = nativeVolumeWrapOf(e.target);
+    if (wrap) setVolumeTooltipText(wrap);
+  }
+  function onVolumeWheelOrKey(e) {
+    const wrap = nativeVolumeWrapOf(e.target);
+    if (!wrap) return;
+    ensureVolumeTooltip();
+    showVolumeTooltip(wrap);
+  }
+  let volumeDelegationBound = false;
+  function bindVolumeTooltipDelegation() {
+    if (volumeDelegationBound) return;
+    volumeDelegationBound = true;
+    document.addEventListener("pointerover", onVolumePointerOver, true);
+    document.addEventListener("pointerout", onVolumePointerOut, true);
+    document.addEventListener("pointermove", onVolumePointerMove, true);
+    document.addEventListener("wheel", onVolumeWheelOrKey, {
+      capture: true,
+      passive: true,
     });
+    document.addEventListener("keydown", onVolumeWheelOrKey, true);
   }
 
   function tick() {
@@ -4136,6 +4180,7 @@
       ensureTabMuteButton();
     }
     // 음량 % 툴팁은 믹서 on/off와 무관하게 항상 부착(기본 볼륨 조작 보조).
+    bindVolumeTooltipDelegation(); // 위임 리스너 1회 등록
     ensureVolumeTooltip();
     // '항상 켜기' 자동 활성화(첫 제스처 이후, 미디어 준비되면). 미디어 전환 시
     // graphConflict는 tick의 페이지 전환 분기에서 초기화되므로 새 영상엔 다시 시도.
