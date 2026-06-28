@@ -289,6 +289,11 @@ Chrome 패키징 스크립트는 다음 작업을 수행합니다.
 - 클립 라이브 이동 버튼 숨김은 치지직 클립 페이지와 `m.naver.com/shorts` iframe DOM 구조에 의존합니다.
 - 본 확장 프로그램은 치지직과 관련이 없으며, 네이버, 치지직, CHZZK은 NAVER의 등록상표입니다.
 
+## 서드파티 라이선스
+
+- 팔로잉 라이브 미리보기의 HLS 재생을 위해 `hls.js` v1.5.20을 포함합니다.
+- `hls.js`는 Apache License 2.0으로 배포되며, 고지와 라이선스 전문은 `THIRD_PARTY_NOTICES.md`와 `LICENSES/Apache-2.0.txt`에 포함되어 있습니다.
+
 ---
 
 ## 업데이트 내역
