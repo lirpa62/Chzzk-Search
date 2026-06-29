@@ -3384,22 +3384,34 @@
     if (key === hwDecodeCache.key) return; // 동일 입력 → 캐시 유지
     if (hwDecodeCache.pending) return; // 조회 진행 중
     hwDecodeCache.pending = true;
-    navigator.mediaCapabilities
-      .decodingInfo({
-        type: "media-source",
-        video: {
-          contentType: `video/mp4; codecs="${codec}"`,
-          width: w,
-          height: h,
-          bitrate,
-          framerate: fps,
-        },
-      })
-      .then((res) => {
+    // media-source(MSE)와 file 두 경로를 모두 조회한다. Windows 크롬은 media-source
+    // 경로에서 H.264가 실제 HW 디코딩 중이어도 powerEfficient:false로 자주 반환하는데,
+    // file 경로는 더 정확한 경우가 많다. 둘 중 하나라도 powerEfficient면 '사용 중'으로
+    // 본다(가능성 판정이므로 보수적으로 OR).
+    const videoConfig = {
+      contentType: `video/mp4; codecs="${codec}"`,
+      width: w,
+      height: h,
+      bitrate,
+      framerate: fps,
+    };
+    const probe = (type) =>
+      navigator.mediaCapabilities
+        .decodingInfo({ type, video: videoConfig })
+        .catch(() => null);
+    Promise.all([probe("media-source"), probe("file")])
+      .then((results) => {
         hwDecodeCache.key = key;
-        if (!res?.supported) {
+        const valid = results.filter((r) => r); // 조회 성공한 것만
+        if (valid.length === 0) {
+          hwDecodeCache.text = "확인 불가";
+          return;
+        }
+        const anySupported = valid.some((r) => r.supported);
+        const anyEfficient = valid.some((r) => r.supported && r.powerEfficient);
+        if (!anySupported) {
           hwDecodeCache.text = "지원 안 함 (코덱 미지원)";
-        } else if (res.powerEfficient) {
+        } else if (anyEfficient) {
           hwDecodeCache.text = "사용 중 (하드웨어 가속)";
         } else {
           hwDecodeCache.text = "미사용 (소프트웨어 디코딩)";
