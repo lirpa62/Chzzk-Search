@@ -4100,6 +4100,24 @@ async function fetchChannelLogPowerContent(channelId) {
   }
 }
 
+// 채널이 라이브 중인지(con-chzzk isChannelLiveOpen 동일): live-status에서
+// status==="OPEN" && closeDate 없음. 조회 실패면 null(불확실 → 호출부에서 보수적 처리).
+async function isLogPowerChannelLive(channelId) {
+  try {
+    const res = await fetch(
+      `https://api.chzzk.naver.com/polling/v3.1/channels/${encodeURIComponent(channelId)}/live-status`,
+      { credentials: "include" },
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    const c = json?.content;
+    if (!c) return null;
+    return c.status === "OPEN" && !c.closeDate;
+  } catch {
+    return null;
+  }
+}
+
 // 표시용 보유량. API 실패면 null(배지는 직전 값 유지). 성공이면 amount(보유 0이면 0).
 async function fetchLogPowerBalance(channelId) {
   const content = await fetchChannelLogPowerContent(channelId);
@@ -4510,6 +4528,8 @@ const logPowerWatchState = new Map(); // channelId → {startedAt,lastAmount,exp
 const logPowerExpectedCache = new Map(); // channelId → expectedAmount(or null)
 let logPowerHourEndsAt = 0; // 현재 채널 1시간 타이머 종료 시각(0=없음)
 let logPowerHourChannelId = "";
+let logPowerHourLiveCheckAt = 0; // 1시간 타이머 도는 동안 라이브 종료 확인 시각
+const LOGPOWER_HOUR_LIVE_CHECK_MS = 60000; // 1분마다 라이브 종료 확인
 
 function tierToWatchAmount(tier) {
   const n = Number(tier);
@@ -4561,6 +4581,17 @@ async function startWatchRewardTracking(channelId) {
   });
 }
 
+// 라이브가 종료됐을 때 그 채널의 적립 추적·1시간 타이머를 모두 정리한다
+// (con-chzzk clearLogPowerLiveStatesForChannel 동일). 방송이 끝났는데 적립/타이머가
+// 계속 도는 것을 막는다.
+function clearLogPowerLiveStates(channelId) {
+  logPowerWatchState.delete(channelId);
+  if (logPowerHourChannelId === channelId) {
+    clearWatchHourTimer(channelId); // 1시간 타이머 인터벌·storage 정리
+  }
+  updateLogPowerIndicators();
+}
+
 // 5분 주기 적립 판정.
 async function checkWatchRewardProgress(channelId) {
   const state = logPowerWatchState.get(channelId);
@@ -4570,6 +4601,14 @@ async function checkWatchRewardProgress(channelId) {
   if (now - state.startedAt > LOGPOWER_WATCH_MAX_MS) {
     logPowerWatchState.delete(channelId);
     updateLogPowerIndicators();
+    return;
+  }
+  // 라이브 종료 확인(con-chzzk 동일): 종료면 적립·타이머 정리하고 중단.
+  // null(조회 실패)은 불확실이므로 보수적으로 계속 진행한다.
+  const live = await isLogPowerChannelLive(channelId);
+  if (channelId !== getCurrentLiveChannelId()) return;
+  if (live === false) {
+    clearLogPowerLiveStates(channelId);
     return;
   }
   // 적립 판정은 '못 찾음'과 '0'을 구분하는 raw 조회를 쓴다(0 폴백 오탐 방지).
@@ -4641,6 +4680,7 @@ function startWatchHourTimer(channelId, endsAt = Date.now() + LOGPOWER_HOUR_MS, 
     }, LOGPOWER_HOUR_CLAIMED_MS);
   }
   if (logPowerHourInterval) clearInterval(logPowerHourInterval);
+  logPowerHourLiveCheckAt = Date.now(); // 시작 직후 즉시 체크 안 하고 1분 후부터
   renderWatchHourTimer();
   logPowerHourInterval = window.setInterval(renderWatchHourTimer, 1000);
 }
@@ -4661,6 +4701,20 @@ function renderWatchHourTimer() {
   const timeEl = badge?.querySelector(".cheese-logpower-time");
   if (timeEl) timeEl.textContent = formatTimer(remaining);
   updateLogPowerIndicators();
+  // 1시간 타이머가 도는 동안 1분마다 라이브 종료를 확인한다(5분 적립 체크보다 빠른
+  // 감지). 종료면 적립·타이머 모두 정리. 탭이 숨김이면 건너뛴다.
+  if (!document.hidden) {
+    const now = Date.now();
+    if (now - logPowerHourLiveCheckAt >= LOGPOWER_HOUR_LIVE_CHECK_MS) {
+      logPowerHourLiveCheckAt = now;
+      const channelId = logPowerHourChannelId;
+      isLogPowerChannelLive(channelId).then((live) => {
+        if (live === false && logPowerHourChannelId === channelId) {
+          clearLogPowerLiveStates(channelId);
+        }
+      });
+    }
+  }
 }
 
 function stopWatchHourTimer(clearState) {
