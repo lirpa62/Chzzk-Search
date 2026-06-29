@@ -19,10 +19,14 @@
 
   // 팝업 기능 표시/숨김 플래그(content.js가 chrome.storage에서 읽어 postMessage로 전달).
   const featureFlags = { videoFilter: false };
+  // 비디오 필터 항상 켜기(전역). 켜져 있으면 채널 설정 로드 후 자동 활성화한다.
+  let videoFilterAlwaysOn = false;
   window.addEventListener("message", (e) => {
     if (e.source !== window || e.data?.source !== "cheese-feature-flags") return;
     featureFlags.videoFilter = e.data.flags?.videoFilter === true;
+    videoFilterAlwaysOn = e.data.videoFilterAlwaysOn === true;
     if (typeof tick === "function") tick();
+    if (typeof maybeAutoEnableFilter === "function") maybeAutoEnableFilter();
   });
   window.postMessage(
     { source: "cheese-feature-flags-request" },
@@ -275,6 +279,7 @@
     preset: "default",
     filters: neutralFilters(),
     customPresets: [],
+    userDisabled: false, // 이 채널에서 사용자가 직접 끔(항상 켜기 opt-out)
   });
 
   let state = DEFAULT_STATE();
@@ -758,6 +763,18 @@
     if (state.enabled) return;
     state.enabled = true;
     applyState();
+  }
+
+  // '항상 켜기'(전역) 자동 활성화. 채널 설정 로드 후/플래그 수신/페이지 전환 시 시도.
+  // 사용자가 이 채널에서 직접 끈 경우(userDisabled)는 존중한다. 비디오 필터는
+  // CSS/SVG 기반이라 오디오처럼 제스처/AudioContext 게이트가 필요 없다.
+  function maybeAutoEnableFilter() {
+    if (!videoFilterAlwaysOn) return;
+    if (featureFlags.videoFilter) return; // 기능 숨김 상태면 자동 활성 안 함
+    if (state.userDisabled) return; // 이 채널은 사용자가 직접 끔(opt-out)
+    if (state.enabled) return; // 이미 켜짐
+    if (!findVideo()) return; // video 준비 전이면 다음 기회
+    setEnabled(true);
   }
 
   // ── 프리셋 적용/dirty 관리 ─────────────────────────────────────────────────
@@ -1267,6 +1284,7 @@
       preset: state.preset,
       filters: { ...state.filters },
       customPresets: normalizeCustomPresets(state.customPresets),
+      userDisabled: state.userDisabled === true,
     };
   }
 
@@ -1292,6 +1310,8 @@
         if (state.enabled) applyState();
         else clearFilter();
         syncUI();
+        // 저장된 enabled가 false여도 '항상 켜기'면 자동 활성화(opt-out 채널 제외).
+        maybeAutoEnableFilter();
       }
     }
   });
@@ -1994,6 +2014,9 @@
         return;
       }
       if (t.dataset.action === "power") {
+        // 사용자가 직접 끄면 이 채널은 '항상 켜기'에서 opt-out(다시 안 켜짐).
+        // 다시 켜면 opt-out 해제. setEnabled가 saveState로 함께 저장한다.
+        state.userDisabled = !t.checked;
         setEnabled(t.checked);
       } else if (t.dataset.action === "auto-sharpen-toggle") {
         setAutoSharpen(t.checked);
@@ -2315,6 +2338,8 @@
     } else {
       ensureButton();
       ensureAppliedFilter();
+      // video가 늦게 떠도 '항상 켜기'를 시도(채널 로드 후 한 번 + 매 tick 보강).
+      maybeAutoEnableFilter();
     }
   }
 

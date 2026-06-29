@@ -97,6 +97,155 @@
   inputs.forEach((input) => input.addEventListener("change", save));
   load();
 
+  // ── 채팅 폰트 크기: 커스텀 팝오버 드롭다운(0.8~2, 기본 1) ──────────────────
+  const CHAT_FONT_SCALE_KEY = "cheeseChatFontScale";
+  const chatFontScalePopover = document.querySelector("[data-chat-font-scale]");
+  if (chatFontScalePopover) {
+    const trigger = chatFontScalePopover.querySelector(
+      ".settings-popover-trigger",
+    );
+    const list = chatFontScalePopover.querySelector(".settings-popover-list");
+    const valueLabel = chatFontScalePopover.querySelector(
+      ".settings-popover-value",
+    );
+    const options = Array.from(list.querySelectorAll("[role='option']"));
+
+    function setChatFontValue(value, persist) {
+      const opt =
+        options.find((o) => o.dataset.value === String(value)) ||
+        options.find((o) => o.dataset.value === "1");
+      options.forEach((o) =>
+        o.setAttribute("aria-selected", String(o === opt)),
+      );
+      valueLabel.textContent = opt.textContent;
+      if (persist) {
+        const v = Number(opt.dataset.value);
+        try {
+          chrome.storage?.local?.set({
+            [CHAT_FONT_SCALE_KEY]: Number.isFinite(v) ? v : 1,
+          });
+        } catch {}
+      }
+    }
+    // 리스트는 position:fixed로 띄워 패널 스크롤 컨테이너(overflow:auto)에 잘리지
+    // 않게 한다. 트리거 화면 좌표 기준으로 아래에 두되, 아래 공간이 부족하면 위로.
+    function positionChatFontList() {
+      const r = trigger.getBoundingClientRect();
+      list.style.minWidth = `${r.width}px`;
+      list.style.left = "auto";
+      list.style.right = `${window.innerWidth - r.right}px`;
+      // 먼저 아래로 가정해 높이를 잰 뒤 공간 판단.
+      const margin = 6;
+      const listH = list.offsetHeight;
+      const below = window.innerHeight - r.bottom;
+      if (below < listH + margin && r.top > below) {
+        // 위로 펼침.
+        list.style.top = "auto";
+        list.style.bottom = `${window.innerHeight - r.top + 4}px`;
+        list.style.maxHeight = `${Math.max(120, r.top - margin)}px`;
+      } else {
+        list.style.bottom = "auto";
+        list.style.top = `${r.bottom + 4}px`;
+        list.style.maxHeight = `${Math.max(120, below - margin)}px`;
+      }
+    }
+    function openChatFontList(open) {
+      list.hidden = !open;
+      trigger.setAttribute("aria-expanded", String(open));
+      chatFontScalePopover.classList.toggle("is-open", open);
+      if (open) positionChatFontList();
+    }
+    // 스크롤/리사이즈 중 열려 있으면 위치 갱신(또는 닫기).
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (!list.hidden) positionChatFontList();
+      },
+      true,
+    );
+    window.addEventListener("resize", () => {
+      if (!list.hidden) positionChatFontList();
+    });
+
+    (async () => {
+      try {
+        const d = await chrome.storage?.local?.get(CHAT_FONT_SCALE_KEY);
+        const v = Number(d?.[CHAT_FONT_SCALE_KEY]);
+        setChatFontValue(Number.isFinite(v) && v > 0 ? v : 1, false);
+      } catch {
+        setChatFontValue(1, false);
+      }
+    })();
+
+    trigger.addEventListener("click", (e) => {
+      if (trigger.disabled) return;
+      e.stopPropagation();
+      openChatFontList(list.hidden);
+    });
+    list.addEventListener("click", (e) => {
+      const opt = e.target.closest("[role='option']");
+      if (!opt) return;
+      setChatFontValue(opt.dataset.value, true);
+      openChatFontList(false);
+    });
+    // 바깥 클릭/ESC로 닫기.
+    document.addEventListener("click", (e) => {
+      if (!chatFontScalePopover.contains(e.target)) openChatFontList(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") openChatFontList(false);
+    });
+  }
+
+  // ── 채팅 기능: 배지 모아 챗이 제어 중이면 해당 토글/셀렉트를 비활성화 ─────────
+  // content.js가 페이지에서 moa 제어 상태를 cheeseChatMoaActive(배열)로 기록한다.
+  const CHAT_MOA_ACTIVE_KEY = "cheeseChatMoaActive";
+  function applyChatMoaLock(activeKeys) {
+    const locked = new Set(Array.isArray(activeKeys) ? activeKeys : []);
+    inputs.forEach((input) => {
+      const key = input.dataset.feature;
+      if (!key || !key.startsWith("chat")) return;
+      const item = input.closest(".settings-item");
+      if (locked.has(key)) {
+        input.disabled = true;
+        item?.classList.add("is-locked");
+        item?.setAttribute("title", "배지 모아 챗이 이 기능을 제어 중입니다");
+      } else {
+        input.disabled = false;
+        item?.classList.remove("is-locked");
+        item?.removeAttribute("title");
+      }
+    });
+    // 폰트 크기 팝오버도 moa가 폰트 스케일을 제어 중이면 잠근다.
+    if (chatFontScalePopover) {
+      const item = chatFontScalePopover.closest(".settings-item");
+      const trig = chatFontScalePopover.querySelector(
+        ".settings-popover-trigger",
+      );
+      if (locked.has("chatFontScale")) {
+        if (trig) trig.disabled = true;
+        item?.classList.add("is-locked");
+        item?.setAttribute("title", "배지 모아 챗이 이 기능을 제어 중입니다");
+      } else {
+        if (trig) trig.disabled = false;
+        item?.classList.remove("is-locked");
+        item?.removeAttribute("title");
+      }
+    }
+  }
+  (async () => {
+    try {
+      const d = await chrome.storage?.local?.get(CHAT_MOA_ACTIVE_KEY);
+      applyChatMoaLock(d?.[CHAT_MOA_ACTIVE_KEY]);
+    } catch {}
+  })();
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes[CHAT_MOA_ACTIVE_KEY]) {
+      applyChatMoaLock(changes[CHAT_MOA_ACTIVE_KEY].newValue);
+    }
+  });
+
   // ── 헤더 바로가기(사이드바 숨김 시 헤더 미니 네비 표시 항목) ───────────────
   // data-feature와 의미가 반대: 체크=표시. 미설정 시 기본 표시 항목은 아래 집합.
   const HEADER_NAV_KEY = "cheeseHeaderNav";
@@ -162,6 +311,33 @@
     } catch {}
   });
   loadMixerAlwaysOn();
+
+  // ── 비디오 필터 항상 켜기(전역) ───────────────────────────────────────────
+  // 체크=항상 켜기(채널 진입 시 자동 활성화). 채널별로 직접 끄면 그 채널은 유지.
+  const VIDEO_FILTER_ALWAYS_ON_KEY = "cheeseVideoFilterAlwaysOn";
+  const videoFilterAlwaysOnInput = document.querySelector(
+    "[data-video-filter-always-on]",
+  );
+
+  async function loadVideoFilterAlwaysOn() {
+    let on = false;
+    try {
+      const data = await chrome.storage?.local?.get(
+        VIDEO_FILTER_ALWAYS_ON_KEY,
+      );
+      on = data?.[VIDEO_FILTER_ALWAYS_ON_KEY] === true;
+    } catch {}
+    if (videoFilterAlwaysOnInput) videoFilterAlwaysOnInput.checked = on;
+  }
+
+  videoFilterAlwaysOnInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [VIDEO_FILTER_ALWAYS_ON_KEY]: videoFilterAlwaysOnInput.checked,
+      });
+    } catch {}
+  });
+  loadVideoFilterAlwaysOn();
 
   // ── 채널 라이브 바로가기 버튼(전역, 기본 ON) ──────────────────────────────
   // 체크=표시. 미설정이면 표시(true)가 기본.

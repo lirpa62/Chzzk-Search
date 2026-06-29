@@ -3076,3 +3076,283 @@
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+
+/* 채팅 입력창 높이 제한 — 채팅 팝업(/live/<id>/chat) 또는 영상/채팅이 상하로
+   나뉜(stacked) 레이아웃에선 textarea가 과도하게 커지지 않도록 max-height를 40px로
+   묶는다. 클래스는 content.js가 토글한다(stacked는 채팅 기능 on/off 무관 항상 적용).
+   (클래스 해시 _input_1xxwu_59 는 빌드마다 바뀌므로 부분 매칭으로 잡는다.) */
+html.cheese-chat-popup aside#aside-chatting textarea[class*="_input_"],
+html.cheese-chat-stacked aside#aside-chatting textarea[class*="_input_"],
+html.cheese-chat-stacked aside#vod-aside textarea[class*="_input_"] {
+  max-height: 40px !important;
+}
+
+/* 보유 통나무파워 배지(채팅 입력창 부근 후원 도구 줄). con-chzzk 스타일 동일. */
+#cheese-logpower-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 5px;
+  padding: 14px 4px;
+  height: 16px;
+  margin-left: auto;
+  color: var(--Content-Neutral-Cool-Strong);
+  cursor: pointer;
+}
+
+#cheese-logpower-badge:hover {
+  background: var(--Surface-Interaction-Lighten-Hovered);
+}
+
+#cheese-logpower-badge .cheese-logpower-text {
+  min-width: 22px;
+  font-size: 10px;
+  text-align: left;
+}
+
+/* 적립 중(progress) / 1시간 타이머(timer) — con-chzzk 동일. 적립 추적 로직이
+   채우기 전엔 hidden. */
+.cheese-logpower-timer,
+.cheese-logpower-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  padding-left: 2px;
+  border-left: 1px solid rgba(var(--color-border-01-rgb), 0.25);
+  color: var(--Content-Brand-Strong);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.cheese-logpower-timer[hidden],
+.cheese-logpower-progress[hidden],
+.cheese-logpower-claimed[hidden] {
+  display: none;
+}
+
+.cheese-logpower-timer svg,
+.cheese-logpower-progress svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
+.cheese-logpower-claimed {
+  color: var(--Content-Brand-Strong);
+}
+
+.cheese-logpower-time {
+  min-width: 31px;
+  text-align: left;
+}
+
+/* 툴팁("통나무 파워") — hover 시 위쪽에 표시. con-chzzk 동일. */
+#cheese-logpower-badge .tooltip-text {
+  visibility: hidden;
+  width: 80px;
+  background-color: var(--Surface-Neutral-Base);
+  color: var(--Content-Neutral-Cool-Stronger);
+  box-shadow:
+    0 2px 8px 0 var(--color-shadow-layer04-02),
+    0 0 2px 0 var(--color-shadow-layer04-01);
+  text-align: center;
+  padding: 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  position: absolute;
+  z-index: 9999;
+  left: 50%;
+  bottom: 116%;
+  margin-left: -42px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+#cheese-logpower-badge:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* 가려진 채팅 복원(chatTimestamp.js): 복원된 메시지는 이탤릭+흐린 색으로 구분하고,
+   본문 이모티콘은 24px로 렌더한다. */
+.cheese-blind-restored-text {
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+img.cheese-blind-emoji {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  vertical-align: middle;
+  object-fit: contain;
+}
+
+/* 채팅 시간 표시(chatTimestamp.js가 닉네임 앞에 삽입하는 HH:MM span).
+   폰트 크기 조절 시 배율 보정은 chatFontScale.css가 처리한다. */
+.cheese-chat-time {
+  margin-right: 4px;
+  font-size: 0.85em;
+  color: var(--Content-Neutral-Cool-Base, rgba(255, 255, 255, 0.5));
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* 채팅 너비 조절 시: 프로필 다이얼로그([role="alertdialog"])와 닉네임 메뉴 팝오버가
+   채팅 너비를 넘지 않도록 너비 변수에 맞춘다(배지 모아 챗 동일). 변수는 content.js의
+   setChatAsideWidth가 채팅 너비 기준으로 설정한다(다이얼로그=너비-12, 팝오버=너비-16). */
+html.cheese-chat-width-resize-enabled aside#aside-chatting [role="alertdialog"],
+html.cheese-chat-width-resize-enabled aside#vod-aside [role="alertdialog"] {
+  width: var(--cheese-chat-profile-popup-width, 208px) !important;
+  max-width: var(--cheese-chat-profile-popup-width, 208px) !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+html.cheese-chat-width-resize-enabled
+  aside#aside-chatting
+  [role="alertdialog"]
+  [id="popup_contents"],
+html.cheese-chat-width-resize-enabled
+  aside#vod-aside
+  [role="alertdialog"]
+  [id="popup_contents"] {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* 닉네임 클릭 메뉴 팝오버(_menu_ > _container_)도 채팅 너비에 맞춤. */
+html.cheese-chat-width-resize-enabled
+  aside#aside-chatting
+  [class*="_menu_"]
+  > [class*="_container_"],
+html.cheese-chat-width-resize-enabled
+  aside#vod-aside
+  [class*="_menu_"]
+  > [class*="_container_"] {
+  width: var(--cheese-chat-popover-width, 204px) !important;
+  max-width: var(--cheese-chat-popover-width, 204px) !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+html.cheese-chat-width-resize-enabled
+  aside#aside-chatting
+  [class*="_menu_"]
+  > [class*="_container_"]
+  [class*="_contents_"]
+  span,
+html.cheese-chat-width-resize-enabled
+  aside#vod-aside
+  [class*="_menu_"]
+  > [class*="_container_"]
+  [class*="_contents_"]
+  span {
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* 1시간 시청 보상 획득 토스트. 채팅 왼쪽 배치면 좌상단에서 왼→오른쪽, 기본(오른쪽)
+   배치면 우상단에서 오른→왼쪽 슬라이드. is-shown으로 진입/이탈. */
+.cheese-logpower-toast {
+  position: fixed;
+  top: 20px;
+  z-index: 2147483000;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(20, 22, 26, 0.96);
+  border: 1px solid rgba(0, 255, 163, 0.32);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.3s ease;
+}
+
+.cheese-logpower-toast.is-right {
+  right: 20px;
+  transform: translateX(calc(100% + 24px));
+}
+
+.cheese-logpower-toast.is-left {
+  left: 20px;
+  transform: translateX(calc(-100% - 24px));
+}
+
+.cheese-logpower-toast.is-shown {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.cheese-logpower-toast-ico {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 1px;
+  color: var(--Content-Brand-Strong, #00ffa3);
+  flex: none;
+}
+
+.cheese-logpower-toast-body b {
+  color: var(--Content-Brand-Strong, #00ffa3);
+  font-weight: 800;
+}
+
+.cheese-logpower-toast-sub {
+  display: inline-block;
+  margin-top: 3px;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 12px;
+}
+
+/* 채팅 너비 조절 중 미니플레이어로 전환되면, 미니플레이어도 조절된 채팅 너비에
+   맞춘다(배지 모아 챗 동일). 높이는 16:9 비율 변수, 내부 video 요소는 100% 채움. */
+html.cheese-chat-width-resize-enabled #live_player_layout.miniplayer {
+  width: var(--cheese-chat-resized-width, 353px) !important;
+  max-width: var(--cheese-chat-resized-width, 353px) !important;
+  min-width: 0 !important;
+  height: var(--cheese-live-miniplayer-height, 206px) !important;
+  box-sizing: border-box !important;
+}
+
+html.cheese-chat-left-position #live_player_layout.miniplayer {
+  left: 0 !important;
+  right: auto !important;
+}
+
+html.cheese-chat-width-resize-enabled
+  #live_player_layout.miniplayer
+  .pzp-pc__video,
+html.cheese-chat-width-resize-enabled
+  #live_player_layout.miniplayer
+  .webplayer-internal-core-shadow,
+html.cheese-chat-width-resize-enabled
+  #live_player_layout.miniplayer
+  .webplayer-internal-core-source-container,
+html.cheese-chat-width-resize-enabled
+  #live_player_layout.miniplayer
+  .webplayer-internal-source-shadow,
+html.cheese-chat-width-resize-enabled
+  #live_player_layout.miniplayer
+  .webplayer-internal-source-wrapper {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  height: 100% !important;
+}

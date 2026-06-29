@@ -261,6 +261,105 @@ body {
   outline-offset: 2px;
 }
 
+/* 커스텀 팝오버 드롭다운(채팅 폰트 크기 등) */
+.settings-popover {
+  position: relative;
+  flex: none;
+}
+
+.settings-popover-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 130px;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border: 1px solid var(--popup-border);
+  border-radius: 8px;
+  background: var(--popup-surface);
+  color: var(--popup-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+
+.settings-popover-trigger:hover:not(:disabled) {
+  border-color: var(--popup-brand);
+}
+
+.settings-popover.is-open .settings-popover-trigger {
+  border-color: var(--popup-brand);
+}
+
+.settings-popover-trigger:focus-visible {
+  outline: 2px solid var(--popup-focus-ring);
+  outline-offset: 2px;
+}
+
+.settings-popover-trigger:disabled {
+  cursor: not-allowed;
+}
+
+.settings-popover-caret {
+  font-size: 10px;
+  color: var(--popup-muted);
+  transition: transform 0.12s ease;
+}
+
+.settings-popover.is-open .settings-popover-caret {
+  transform: rotate(180deg);
+}
+
+/* 옵션 리스트 — position:fixed로 띄워 패널 스크롤 컨테이너(overflow:auto)에 잘리지
+   않게 한다. 정확한 top/left/right/max-height는 settings.js가 트리거 좌표로 지정. */
+.settings-popover-list {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--popup-border);
+  border-radius: 10px;
+  background: var(--popup-surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  overflow-y: auto;
+}
+
+.settings-popover-list[hidden] {
+  display: none;
+}
+
+.settings-popover-list [role="option"] {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--popup-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.settings-popover-list [role="option"]:hover {
+  background: var(--popup-soft-bg);
+}
+
+.settings-popover-list [role="option"][aria-selected="true"] {
+  background: var(--popup-help-bg);
+  color: var(--popup-brand-strong);
+}
+
+/* 다른 확장(배지 모아 챗)이 제어 중이라 잠긴 항목: 흐리게 + 비활성. */
+.settings-item.is-locked {
+  opacity: 0.5;
+}
+
+.settings-item.is-locked .settings-switch {
+  cursor: not-allowed;
+}
+
 /* 그룹 설명 문구 */
 .settings-group-desc {
   margin: 8px 2px 0;

@@ -128,6 +128,24 @@
           <button
             type="button"
             class="settings-tab"
+            data-tab="chat"
+            role="tab"
+            aria-selected="false"
+          >
+            채팅
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
+            data-tab="logpower"
+            role="tab"
+            aria-selected="false"
+          >
+            통나무파워
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
             data-tab="clip"
             role="tab"
             aria-selected="false"
@@ -178,6 +196,19 @@
                 </label>
                 <label class="settings-switch">
                   <input type="checkbox" data-feature="videoFilter" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">비디오 필터 항상 켜기</span>
+                  <span class="settings-item-desc"
+                    >채널 진입 시 비디오 필터 자동 활성화(채널별로 직접 끄면
+                    유지)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-video-filter-always-on />
                   <i aria-hidden="true"></i>
                 </label>
               </li>
@@ -862,6 +893,194 @@
               탐색 페이지의 라이브 카드에 마우스를 올리면 치지직이 음소거 미리보기를
               잠깐 재생합니다. 이 위에서 우클릭으로 음소거를 끄거나 휠로 음량을
               조절할 수 있습니다.
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="chat"
+            aria-label="채팅 정리"
+          >
+            <h2 class="settings-group-title">채팅창 정리</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">채팅창 랭킹 숨김</span>
+                  <span class="settings-item-desc"
+                    >치즈/후원 랭킹 버튼 영역(체크=숨김)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatHideRanking" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name"
+                    >채팅창 진행 중인 미션 숨김</span
+                  >
+                  <span class="settings-item-desc"
+                    >미션 진행 패널(체크=숨김)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatHideMission" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">채팅창 승부예측 숨김</span>
+                  <span class="settings-item-desc"
+                    >승부예측 진행 패널(체크=숨김)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatHidePrediction" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">채팅창 넓이 조절</span>
+                  <span class="settings-item-desc"
+                    >채팅창 좌측 경계를 드래그해 너비 조절(체크=사용)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatWidthResize" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">채팅창 왼쪽 배치</span>
+                  <span class="settings-item-desc"
+                    >채팅창을 플레이어 왼쪽에 배치(체크=사용)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatLeftPosition" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">채팅 시간 표시</span>
+                  <span class="settings-item-desc"
+                    >각 채팅 앞에 보낸 시각(HH:MM) 표시(체크=표시)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatShowTime" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">가려진 채팅 표시</span>
+                  <span class="settings-item-desc"
+                    >클린봇·블라인드로 가려진 메시지를 원문으로 표시(체크=표시)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatRestoreBlind" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label id="chatFontScaleLabel">
+                  <span class="settings-item-name">채팅 폰트 크기</span>
+                  <span class="settings-item-desc"
+                    >채팅 글자·이모티콘·배지 크기 배율</span
+                  >
+                </label>
+                <div class="settings-popover" data-chat-font-scale>
+                  <button
+                    type="button"
+                    class="settings-popover-trigger"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    aria-labelledby="chatFontScaleLabel"
+                  >
+                    <span class="settings-popover-value">기본 (100%)</span>
+                    <span class="settings-popover-caret" aria-hidden="true">▾</span>
+                  </button>
+                  <ul class="settings-popover-list" role="listbox" hidden>
+                    <li role="option" data-value="0.8">작게 (80%)</li>
+                    <li role="option" data-value="0.9">조금 작게 (90%)</li>
+                    <li role="option" data-value="1" aria-selected="true">기본 (100%)</li>
+                    <li role="option" data-value="1.1">조금 크게 (110%)</li>
+                    <li role="option" data-value="1.2">크게 (120%)</li>
+                    <li role="option" data-value="1.5">더 크게 (150%)</li>
+                    <li role="option" data-value="1.75">매우 크게 (175%)</li>
+                    <li role="option" data-value="2">최대 (200%)</li>
+                  </ul>
+                </div>
+              </li>
+            </ul>
+            <p class="settings-group-desc">
+              채팅창이 열려 있는 라이브/다시보기에서 동작합니다. 너비는 채팅창
+              왼쪽 경계를 드래그해 조절하며 전역으로 저장됩니다.
+            </p>
+            <p class="settings-notice">
+              <strong>배지 모아 챗</strong> 확장이 채팅창을 제어 중이면 충돌을
+              막기 위해 이 기능들이 자동으로 양보합니다(배지 모아 챗이 켜진 동안
+              우리 채팅 정리는 적용되지 않음). 배지 모아 챗을 끄면 다시
+              적용됩니다.
+            </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="logpower"
+            aria-label="통나무파워"
+          >
+            <h2 class="settings-group-title">통나무파워</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">보유 통나무파워 표시</span>
+                  <span class="settings-item-desc"
+                    >현재 채널에 보유 중인 통나무파워를 채팅 입력창 부근에
+                    표시(체크=표시)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatLogPower" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">통나무파워 자동 획득</span>
+                  <span class="settings-item-desc"
+                    >시청 중 받을 수 있는 통나무파워를 자동으로 획득(체크=사용)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatLogPowerAuto" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">획득 토스트 알림</span>
+                  <span class="settings-item-desc"
+                    >1시간 시청 보상을 획득하면 화면 모서리에 알림 표시(체크=표시)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatLogPowerToast" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
+            <p class="settings-group-desc">
+              라이브 페이지에서 동작합니다. 보유 표시는 채팅 입력창 옆에 현재 채널의
+              보유량을 보여주고, 자동 획득은 시청 보상(1시간 시청 등)을 자동으로
+              받습니다. 획득 토스트는 1시간 보상을 받았을 때 알림을 띄웁니다.
             </p>
           </section>
 

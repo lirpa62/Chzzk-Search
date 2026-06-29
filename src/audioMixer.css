@@ -686,8 +686,11 @@
 }
 
 .cheese-mixer-custom-select {
-  position: relative;
-  display: grid;
+  /* apply 버튼과 액션 버튼을 flex로 '나란히' 둬 서로 겹치지 않게 한다. 과거엔
+     actions를 position:absolute로 apply 위에 띄웠는데, 버튼 둥근 모서리에서
+     apply↔별버튼이 번갈아 호버되며 커서가 깜빡이던 문제가 있었다. */
+  display: flex;
+  align-items: stretch;
   min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
@@ -696,8 +699,9 @@
 }
 
 .cheese-mixer-custom-apply {
+  flex: 1 1 auto;
   min-width: 0;
-  padding: 9px 58px 9px 10px;
+  padding: 9px 10px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -731,11 +735,18 @@
 }
 
 .cheese-mixer-custom-actions {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+  flex: none;
   display: flex;
+  align-items: center;
   gap: 4px;
+  padding: 6px 6px 6px 0;
+}
+
+/* 아이콘 버튼 내부 SVG는 이벤트 대상에서 제외 — 버튼만 호버 타겟으로 둔다
+   (채워진 별의 path가 타겟이 되면 호버가 흔들리는 것 방지). */
+.cheese-mixer-custom-icon-button svg,
+.cheese-mixer-custom-icon-button svg * {
+  pointer-events: none;
 }
 
 .cheese-mixer-custom-icon-button {
@@ -760,6 +771,13 @@
 .cheese-mixer-custom-icon-button.is-danger:hover {
   border-color: rgba(255, 73, 80, 0.55);
   color: #ff6b70;
+}
+
+/* 기본값으로 등록된 커스텀 프리셋의 별 버튼(채워진 별) — 민트색 강조. */
+.cheese-mixer-custom-icon-button.is-default {
+  border-color: rgba(0, 255, 163, 0.5);
+  color: #00ffa3;
+  background: rgba(0, 255, 163, 0.1);
 }
 
 .cheese-mixer-draft-bar {

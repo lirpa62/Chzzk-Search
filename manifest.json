@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "치즈 플래터 - Chzzk Platter",
   "short_name": "ChzzkPlatter",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "치지직 검색·오디오 믹서·비디오 필터·실시간 따라잡기·레이아웃 정리를 한 접시에",
   "icons": {
     "16": "icons/icon-16.png",
@@ -36,12 +36,12 @@
         "https://studio.chzzk.naver.com/*"
       ],
       "js": ["src/hls.min.js", "src/searchQuery.js", "src/content.js"],
-      "css": ["src/content.css"],
+      "css": ["src/content.css", "src/chatFontScale.css"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://chzzk.naver.com/*"],
-      "js": ["src/audioMixer.js", "src/videoFilter.js"],
+      "js": ["src/audioMixer.js", "src/videoFilter.js", "src/chatTimestamp.js"],
       "css": ["src/audioMixer.css", "src/videoFilter.css"],
       "run_at": "document_idle",
       "world": "MAIN"

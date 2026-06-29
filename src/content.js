@@ -80,6 +80,8 @@ let syncCustomValue = null; // {enable, target} 또는 null
 // 오디오 믹서 '항상 켜기'(전역). MAIN world(audioMixer)에 함께 전달.
 const MIXER_ALWAYS_ON_KEY = "cheeseMixerAlwaysOn";
 let mixerAlwaysOn = false;
+const VIDEO_FILTER_ALWAYS_ON_KEY = "cheeseVideoFilterAlwaysOn";
+let videoFilterAlwaysOn = false;
 // 채널 홈 탭리스트 끝에 라이브 바로가기 버튼 표시(전역, 기본 ON). content.js 전용.
 const CHANNEL_LIVE_BUTTON_KEY = "cheeseChannelLiveButton";
 let channelLiveButtonOn = true;
@@ -103,6 +105,17 @@ const featureFlags = {
   videoFilter: false,
   liveSync: false,
   liveRewind: false, // 플레이어 컨트롤의 라이브 되감기/앞으로 버튼 숨김
+  // 채팅창 정리(체크=적용. 다른 기능들과 달리 '숨김'이 아니라 '기능 켬').
+  chatHideRanking: false,
+  chatHideMission: false,
+  chatHidePrediction: false,
+  chatWidthResize: false,
+  chatLeftPosition: false,
+  chatShowTime: false, // 채팅 메시지에 HH:MM 시간 표시(MAIN world chatTimestamp.js)
+  chatRestoreBlind: false, // 가려진(클린봇/블라인드) 채팅 원문 복원(chatTimestamp.js)
+  chatLogPower: false, // 현재 채널 보유 통나무파워를 채팅 영역에 표시
+  chatLogPowerAuto: false, // 통나무파워 자동 획득(적격 claim PUT)
+  chatLogPowerToast: false, // 1시간 시청 보상 획득 시 토스트 알림
   streamStats: false,
   tabMute: false, // 플레이어 우측 컨트롤의 '탭 음소거' 버튼 숨김
   commentTimestamp: false,
@@ -3970,6 +3983,788 @@ function getCurrentLiveChannelId() {
   return match ? decodeURIComponent(match[1]) : "";
 }
 
+// ══ 보유 통나무파워 표시(con-chzzk 이식) ══════════════════════════════════════
+// GET channels/<id>/log-power 로 '현재 채널'의 보유량(content.amount)을 직접 받는다.
+// (과거엔 전체 balances에서 찾았는데, 그 채널이 balances에 없으면 0/누락으로 배지가
+// 사라지는 문제가 있었다. 개별 채널 API가 정확·안정적이라 이쪽을 쓴다.)
+const LOGPOWER_CHANNEL_BASE =
+  "https://api.chzzk.naver.com/service/v1/channels";
+const LOGPOWER_BADGE_ID = "cheese-logpower-badge";
+const LOGPOWER_REFRESH_MS = 60000; // 1분마다 갱신
+let logPowerTimer = 0;
+let logPowerChannelId = "";
+// 보유량 적응형 캐시(con-chzzk fetchChannelLogPower 동일). 캐시가 유효하면 네트워크
+// 재요청 없이 캐시값을 쓰고, fetch 실패 시에도 직전 캐시값을 유지해 배지가 '-'로
+// 깜빡이지 않게 한다. URL이 바뀌면(채널 전환) 캐시 무효화.
+let logPowerCachedAmount = null;
+let logPowerCacheAt = 0;
+let logPowerCacheHref = "";
+
+function logPowerIcon() {
+  // 통나무파워 아이콘(치지직 power 아이콘, con-chzzk 동일).
+  return `<svg width="14" height="14" style="margin-right:auto" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><mask id="cheese-lp-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16" style="mask-type:alpha"><path d="M6.79453 2.43359C7.09254 2.43374 7.36838 2.58075 7.53476 2.82161L7.59921 2.93099L8.91692 5.56641H5.98333L5.82643 5.25326L5.06796 3.73568C4.76891 3.13737 5.20381 2.43379 5.87265 2.43359H6.79453Z" fill="currentColor"></path><path fill-rule="evenodd" clip-rule="evenodd" d="M12.1484 4.43359C13.0053 4.43359 13.6561 5.0624 14.0599 5.80273C14.4754 6.5645 14.7148 7.57802 14.7148 8.66667C14.7148 9.75531 14.4754 10.7688 14.0599 11.5306C13.6561 12.2709 13.0053 12.8997 12.1484 12.8997H4C3.14314 12.8997 2.49236 12.2709 2.08854 11.5306C1.67304 10.7688 1.43359 9.75531 1.43359 8.66667C1.43359 7.57802 1.67304 6.5645 2.08854 5.80273C2.49236 5.0624 3.14314 4.43359 4 4.43359H12.1484ZM4 5.56641C3.75232 5.56641 3.40334 5.75848 3.08333 6.34505C2.77498 6.91036 2.56641 7.73027 2.56641 8.66667C2.56641 9.60306 2.77498 10.423 3.08333 10.9883C3.40334 11.5749 3.75232 11.7669 4 11.7669C4.24767 11.7669 4.59666 11.5749 4.91667 10.9883C5.22502 10.423 5.43359 9.60306 5.43359 8.66667C5.43359 7.73027 5.22502 6.91036 4.91667 6.34505C4.59666 5.75848 4.24767 5.56641 4 5.56641ZM6.52604 9.43359C6.48364 9.83162 6.40829 10.2124 6.30404 10.5664H11.6667L11.7246 10.5638C12.0104 10.5348 12.2331 10.2934 12.2331 10C12.2331 9.7066 12.0104 9.46522 11.7246 9.4362L11.6667 9.43359H6.52604ZM6.28385 6.70052C6.39253 7.05354 6.47186 7.43444 6.51823 7.83333H7.33333L7.39128 7.83073C7.67694 7.80172 7.89962 7.56022 7.89974 7.26693C7.89974 6.97353 7.67701 6.73215 7.39128 6.70312L7.33333 6.70052H6.28385ZM9.60026 6.70052C9.2873 6.70052 9.0332 6.95397 9.0332 7.26693C9.03333 7.57978 9.28738 7.83333 9.60026 7.83333H13.5228C13.4637 7.41061 13.3619 7.02765 13.2298 6.70052H9.60026Z" fill="currentColor"></path><path d="M5.43359 8.66667C5.43359 7.73027 5.22502 6.91036 4.91667 6.34505C4.59666 5.75848 4.24767 5.56641 4 5.56641C3.75232 5.56641 3.40334 5.75848 3.08333 6.34505C2.77498 6.91036 2.56641 7.73027 2.56641 8.66667C2.56641 9.60306 2.77498 10.423 3.08333 10.9883C3.40334 11.5749 3.75232 11.7669 4 11.7669C4.24767 11.7669 4.59666 11.5749 4.91667 10.9883C5.22502 10.423 5.43359 9.60306 5.43359 8.66667ZM6.56641 8.66667C6.56641 9.75531 6.32696 10.7688 5.91146 11.5306C5.50764 12.2709 4.85686 12.8997 4 12.8997C3.14314 12.8997 2.49236 12.2709 2.08854 11.5306C1.67304 10.7688 1.43359 9.75531 1.43359 8.66667C1.43359 7.57802 1.67304 6.5645 2.08854 5.80273C2.49236 5.0624 3.14314 4.43359 4 4.43359C4.85686 4.43359 5.50764 5.0624 5.91146 5.80273C6.32696 6.5645 6.56641 7.57802 6.56641 8.66667Z" fill="currentColor"></path><path d="M4.66667 8.66667C4.66667 9.40305 4.36819 10 4 10C3.63181 10 3.33333 9.40305 3.33333 8.66667C3.33333 7.93029 3.63181 7.33333 4 7.33333C4.36819 7.33333 4.66667 7.93029 4.66667 8.66667Z" fill="currentColor"></path></mask><g mask="url(#cheese-lp-mask)"><rect width="15.9998" height="16" fill="currentColor"></rect></g></svg>`;
+}
+
+// 통나무파워 값 축약 표기(con-chzzk formatCompactPower 동일): 1만 미만은 그대로,
+// 이상은 만/억 단위 1자리 소수로.
+function formatCompactPower(value) {
+  const n = Number(value) || 0;
+  if (n < 10000) return n.toLocaleString("ko-KR");
+  const units = [
+    { value: 100000000, suffix: "억" },
+    { value: 10000, suffix: "만" },
+  ];
+  const unit = units.find((x) => n >= x.value);
+  const scaled = n / unit.value;
+  const display = Math.floor(scaled * 10) / 10;
+  return `${display.toFixed(1).replace(/\.0$/, "")}${unit.suffix}`;
+}
+
+// 배지를 붙일 호스트: 채팅 '입력창'의 후원 도구 줄(con-chzzk findDonationContainer
+// 동일). '후원하기' 버튼의 부모 div를 host로 삼는다. 클래스 난독화 대응으로 버튼
+// 텍스트를 우선 신호로 쓴다.
+// 주의: [class*='_donation_'] 폴백을 먼저 쓰면 채팅 '메시지' 안의 도네이션 컨테이너
+// (_is_donation_o04z9_)를 잘못 잡아 배지가 메시지로 들어갔다 나오는 핑퐁이 난다.
+// 그래서 (1) 후원하기 버튼 우선, (2) 폴백은 입력 영역(_is_donation_ 제외)으로 한정.
+function findLogPowerHost() {
+  // 1) '후원하기' 버튼의 부모 div(가장 정확).
+  const aside = document.querySelector("aside#aside-chatting");
+  const scope = aside || document;
+  for (const btn of scope.querySelectorAll("button")) {
+    const t = (btn.textContent || "").trim();
+    if (t.startsWith("후원하기")) {
+      const parent = btn.parentElement;
+      if (parent && parent.tagName === "DIV") return parent;
+      return btn.closest("div");
+    }
+  }
+  // 2) 폴백: 입력 textarea와 같은 입력 박스 안의 후원 컨테이너만(채팅 메시지 도네
+  //    _is_donation_ 은 제외). textarea가 없으면 host 없음으로 본다.
+  const inputArea = findLogPowerInputArea();
+  if (inputArea) {
+    const host = inputArea.querySelector(
+      "[class*='live_chatting_input_donation__'], [class*='_donation_']:not([class*='_is_donation_'])",
+    );
+    if (host) return host;
+  }
+  return null;
+}
+
+// 좁게 감시할 입력 영역(con-chzzk findChatInputArea 동일): 채팅 textarea를 감싸면서
+// 후원 도구 줄(host)을 후손으로 갖는 상위 입력 박스. 치지직 재렌더 시 이 박스가 통째
+// 교체되므로, 이 영역만 MutationObserver로 감시하면 채팅 메시지 변이는 콜백을 안
+// 깨워 CPU/메모리 부담이 크게 준다(전체 documentElement 감시는 메모리 폭증 위험).
+function findLogPowerInputArea() {
+  const ta = document.querySelector(
+    "aside#aside-chatting textarea[class*='_input_'], aside#aside-chatting textarea[placeholder*='채팅']",
+  );
+  if (!ta) return null;
+  // textarea에서 위로 올라가며, 같은 박스 안에 후원 host(_donation_/후원하기)를
+  // 후손으로 갖는 최상위 입력 박스를 찾는다.
+  let node = ta.parentElement;
+  for (let i = 0; node && node.tagName !== "BODY" && i < 8; i++) {
+    if (node.contains(ta) && nodeHasDonationHost(node)) return node;
+    node = node.parentElement;
+  }
+  return ta.closest("aside") || ta.parentElement;
+}
+
+// 주어진 노드 안에 후원 컨테이너/후원하기 버튼이 있는지(입력 박스 판별용).
+function nodeHasDonationHost(node) {
+  // 입력창 후원 컨테이너만(채팅 메시지 도네 _is_donation_ 제외) 또는 후원하기 버튼.
+  if (
+    node.querySelector(
+      "[class*='_donation_']:not([class*='_is_donation_'])",
+    )
+  ) {
+    return true;
+  }
+  for (const btn of node.querySelectorAll("button")) {
+    if ((btn.textContent || "").trim().startsWith("후원하기")) return true;
+  }
+  return false;
+}
+
+// 개별 채널 log-power의 content.amount를 직접 조회. {amount} 객체 또는 null(실패).
+async function fetchChannelLogPowerContent(channelId) {
+  try {
+    const res = await fetch(
+      `${LOGPOWER_CHANNEL_BASE}/${channelId}/log-power`,
+      { credentials: "include" },
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json?.content || null;
+  } catch {
+    return null;
+  }
+}
+
+// 표시용 보유량. API 실패면 null(배지는 직전 값 유지). 성공이면 amount(보유 0이면 0).
+async function fetchLogPowerBalance(channelId) {
+  const content = await fetchChannelLogPowerContent(channelId);
+  if (!content) return null;
+  return Number(content.amount) || 0;
+}
+
+// 표시용 보유량(적응형 캐시, con-chzzk fetchChannelLogPower 동일). 캐시 유효하면
+// 네트워크 없이 캐시값을 반환하고, fetch 실패 시에도 직전 캐시값을 반환해 '-' 깜빡임을
+// 막는다. URL(채널)이 바뀌면 캐시를 버린다.
+async function fetchLogPowerBalanceCached(channelId) {
+  const href = location.href;
+  const now = Date.now();
+  if (
+    logPowerCachedAmount != null &&
+    href === logPowerCacheHref &&
+    now - logPowerCacheAt < LOGPOWER_REFRESH_MS
+  ) {
+    return logPowerCachedAmount;
+  }
+  const amount = await fetchLogPowerBalance(channelId);
+  if (amount != null) {
+    logPowerCachedAmount = amount;
+    logPowerCacheAt = Date.now();
+    logPowerCacheHref = href;
+    return amount;
+  }
+  // fetch 실패 → 직전 캐시값 유지(같은 채널일 때만).
+  return href === logPowerCacheHref ? logPowerCachedAmount : null;
+}
+
+// 적립 판정 전용: API 실패(undefined)와 보유 0(0)을 구분한다. 실패 시 그 회차 판정을
+// 스킵해, 일시적 누락을 '적립'으로 오탐하는 것을 막는다.
+async function fetchLogPowerAmountRaw(channelId) {
+  const content = await fetchChannelLogPowerContent(channelId);
+  if (!content) return undefined;
+  return Number(content.amount) || 0;
+}
+
+// 배지 DOM이 현재 host에 올바르게 붙어 있도록 보장(fetch 없이 동기). 없으면 생성,
+// host가 바뀌었으면(채팅 재렌더로 도구 줄 교체) 새 host로 이동. 반환=배지 또는 null.
+// 치지직이 _donation_/_tools_를 통째 새 노드로 교체해 배지가 detach되는 경우를
+// 매번 현재 host 기준으로 재부착해 '사라짐'을 막는다.
+function ensureLogPowerBadge() {
+  const host = findLogPowerHost();
+  if (!host) return null;
+  let badge = document.getElementById(LOGPOWER_BADGE_ID);
+  // 배지가 없거나, 현재 host(또는 그 후손)에 붙어있지 않으면 (재)부착.
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.id = LOGPOWER_BADGE_ID;
+    badge.className = "cheese-logpower-badge logpower-tooltip";
+    const clockSvg = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3.25a6.75 6.75 0 1 0 0 13.5 6.75 6.75 0 0 0 0-13.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M10 6.6v3.8l2.55 1.55" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    badge.innerHTML =
+      `${logPowerIcon()}<b class="cheese-logpower-text">-</b>` +
+      `<span class="cheese-logpower-progress" hidden>${clockSvg}<span>적립 중</span></span>` +
+      `<span class="cheese-logpower-timer" hidden>${clockSvg}<span class="cheese-logpower-claimed" hidden>획득</span><span class="cheese-logpower-time">60:00</span></span>` +
+      `<span class="tooltip-text">통나무 파워</span>`;
+  }
+  // detach됐거나, 다른 host거나, host의 마지막 자식이 아니면 끝으로 (재)부착한다.
+  // (con-chzzk upsertBadge와 동일: 항상 후원 버튼 옆 맨 끝에 두어 위치도 보장.)
+  if (badge.parentElement !== host || host.lastElementChild !== badge) {
+    host.appendChild(badge);
+  }
+  // 도구 줄이 넘칠 때 줄바꿈(con-chzzk 동일: _donation_ + _tools_).
+  host.style.flexWrap = "wrap";
+  if (host.parentElement instanceof HTMLElement) {
+    host.parentElement.style.flexWrap = "wrap";
+  }
+  return badge;
+}
+
+function renderLogPowerBadge(amount) {
+  const badge = ensureLogPowerBadge();
+  if (!badge) return;
+  const textEl = badge.querySelector(".cheese-logpower-text");
+  if (textEl) {
+    if (amount == null) {
+      // 값 미상이면 직전 값을 유지한다('-'로 덮어쓰지 않음). 새 배지면 '-'.
+      if (!textEl.textContent || textEl.textContent === "-") {
+        textEl.textContent = "-";
+      }
+    } else {
+      textEl.textContent = formatCompactPower(amount);
+      textEl.title = (Number(amount) || 0).toLocaleString("ko-KR");
+    }
+  }
+}
+
+function removeLogPowerBadge() {
+  const badge = document.getElementById(LOGPOWER_BADGE_ID);
+  if (!badge) return;
+  // 추가했던 flex-wrap 원복(host와 그 부모).
+  const host = badge.parentElement;
+  if (host instanceof HTMLElement) {
+    host.style.removeProperty("flex-wrap");
+    if (host.parentElement instanceof HTMLElement) {
+      host.parentElement.style.removeProperty("flex-wrap");
+    }
+  }
+  badge.remove();
+}
+
+// con-chzzk render() 흐름 동일: (1) 배지 DOM을 먼저 보장(값 무관, 즉시), (2) 캐시
+// 기반 값 조회, (3) 값이 있을 때만 텍스트 갱신(null이면 직전 표시 유지). 이렇게 하면
+// fetch가 느리거나 실패해도 배지/값이 깜빡이지 않는다.
+async function refreshLogPowerBadge() {
+  const channelId = getCurrentLiveChannelId();
+  if (!channelId) {
+    removeLogPowerBadge();
+    return;
+  }
+  // 1) DOM 먼저 보장(detach됐으면 재부착). 비동기 fetch를 기다리지 않는다.
+  ensureLogPowerBadge();
+  // 2) 캐시 기반 값(실패해도 직전 캐시 유지).
+  const amount = await fetchLogPowerBalanceCached(channelId);
+  if (channelId !== getCurrentLiveChannelId()) return;
+  // 3) 값이 있을 때만 텍스트 갱신(con-chzzk: amt != null).
+  if (amount != null) {
+    renderLogPowerBadge(amount);
+    startWatchRewardTracking(channelId);
+  }
+  updateLogPowerIndicators();
+}
+
+// 채팅 입력 영역(후원 도구 줄을 품은 박스)'만 좁게' 감시해, 치지직 재렌더로 배지가
+// detach되면 즉시 재부착한다. 전체 documentElement 감시는 채팅 메시지 변이까지 전부
+// 콜백을 깨워 CPU/메모리가 폭증(6GB+ 경험)하므로 절대 쓰지 않는다. con-chzzk
+// ensureObserver/attachObserverTo 패턴: 감시 영역이 교체(isConnected=false)되면
+// 새 영역에 재부착하고, 영역이 아직 없으면 짧게 폴링해 대기한다.
+let logPowerBadgeObserver = null;
+let logPowerObservedArea = null;
+let logPowerAreaWaitTimer = 0;
+
+// 변이가 우리 배지 자체에 관한 것인지(우리가 일으킨 append 등) — 그러면 무시해
+// 콜백→append→콜백 핑퐁을 막는다(con-chzzk isBadgeMutation 동일).
+function isLogPowerBadgeMutation(mutation) {
+  const badge = document.getElementById(LOGPOWER_BADGE_ID);
+  if (!badge) return false;
+  if (badge.contains(mutation.target)) return true;
+  const nodes = [...mutation.addedNodes, ...mutation.removedNodes];
+  return nodes.some((n) => n === badge || badge.contains(n));
+}
+
+// 옵저버 콜백용 디바운스 재부착(con-chzzk debouncedRender 400ms 동일). rAF(즉시)는
+// 치지직이 배지를 또 제거할 때 핑퐁이 심해 깜빡임이 났다. 400ms로 합쳐 안정화하고,
+// 재부착 시 값도 캐시 기반으로 갱신(con-chzzk render: upsertBadge + 값).
+const debouncedLogPowerReattach = debounce(() => {
+  if (!featureFlags.chatLogPower || !getCurrentLiveChannelId()) return;
+  refreshLogPowerBadge(); // 내부에서 ensureLogPowerBadge + 캐시 값 갱신
+}, 400);
+
+function attachLogPowerObserverTo(area) {
+  if (logPowerBadgeObserver) logPowerBadgeObserver.disconnect();
+  logPowerObservedArea = area;
+  logPowerBadgeObserver = new MutationObserver((mutations) => {
+    // 배지 자체 변이만이면 무시(우리 append 핑퐁 방지).
+    if (mutations.length && mutations.every(isLogPowerBadgeMutation)) return;
+    debouncedLogPowerReattach();
+  });
+  logPowerBadgeObserver.observe(area, { childList: true, subtree: true });
+}
+
+// 입력 영역에 옵저버를 보장. 감시 중인 영역이 살아있으면 그대로, 교체됐으면 재부착.
+// 영역이 아직 없으면 1초 폴링으로 나타날 때까지 대기(전체 감시 안 함).
+function ensureLogPowerBadgeObserver() {
+  if (
+    logPowerBadgeObserver &&
+    logPowerObservedArea &&
+    logPowerObservedArea.isConnected
+  ) {
+    return; // 살아있는 영역 감시 중 → 유지
+  }
+  const area = findLogPowerInputArea();
+  if (area) {
+    if (logPowerAreaWaitTimer) {
+      clearInterval(logPowerAreaWaitTimer);
+      logPowerAreaWaitTimer = 0;
+    }
+    attachLogPowerObserverTo(area);
+    return;
+  }
+  // 입력 영역이 아직 없으면(진입 직후 등) 나타날 때까지 짧게 폴링.
+  if (!logPowerAreaWaitTimer) {
+    logPowerAreaWaitTimer = window.setInterval(() => {
+      if (!featureFlags.chatLogPower || !getCurrentLiveChannelId()) {
+        clearInterval(logPowerAreaWaitTimer);
+        logPowerAreaWaitTimer = 0;
+        return;
+      }
+      const a = findLogPowerInputArea();
+      if (a) {
+        clearInterval(logPowerAreaWaitTimer);
+        logPowerAreaWaitTimer = 0;
+        attachLogPowerObserverTo(a);
+        // 영역이 막 나타났으면 배지가 없을 테니 값+DOM 생성, 있으면 위치만 보장.
+        if (!document.getElementById(LOGPOWER_BADGE_ID)) {
+          refreshLogPowerBadge();
+        } else {
+          ensureLogPowerBadge();
+        }
+        updateLogPowerIndicators();
+      }
+    }, 1000);
+  }
+}
+
+function stopLogPowerBadgeObserver() {
+  if (logPowerBadgeObserver) {
+    logPowerBadgeObserver.disconnect();
+    logPowerBadgeObserver = null;
+  }
+  logPowerObservedArea = null;
+  if (logPowerAreaWaitTimer) {
+    clearInterval(logPowerAreaWaitTimer);
+    logPowerAreaWaitTimer = 0;
+  }
+}
+
+// 토글/페이지 전환에 따라 표시·타이머 보장. init에서 호출.
+function applyLogPowerBadge() {
+  const channelId = getCurrentLiveChannelId();
+  const on = featureFlags.chatLogPower && !!channelId;
+  if (!on) {
+    stopLogPowerTimer();
+    stopWatchRewardTimer();
+    stopWatchHourTimer(true);
+    stopLogPowerBadgeObserver();
+    removeLogPowerBadge();
+    logPowerChannelId = "";
+    return;
+  }
+  // 채널이 바뀌었으면 즉시 갱신 + 적립 추적 시작 + 1시간 타이머 복원.
+  if (channelId !== logPowerChannelId) {
+    // 채널 전환 → 보유량 캐시 무효화(이전 채널 값이 잠깐 보이지 않게).
+    logPowerCachedAmount = null;
+    logPowerCacheHref = "";
+    // 이전 채널 1시간 타이머 인터벌 정리(state는 채널별 storage라 보존).
+    if (logPowerHourChannelId && logPowerHourChannelId !== channelId) {
+      stopWatchHourTimer(true);
+    }
+    logPowerChannelId = channelId;
+    refreshLogPowerBadge();
+    restoreWatchHourTimer(channelId);
+  } else if (!document.getElementById(LOGPOWER_BADGE_ID)) {
+    // 채널은 같지만 배지가 없음(토글을 방금 켬/다른 탭 동기화 등) → 값+DOM 생성.
+    refreshLogPowerBadge();
+  } else {
+    // 배지가 이미 있으면 위치만 보장(값은 폴링이 갱신).
+    ensureLogPowerBadge();
+  }
+  ensureLogPowerBadgeObserver(); // 채팅 재렌더 시 즉시 재부착
+  startLogPowerTimer();
+  startWatchRewardTimer();
+  updateLogPowerIndicators(); // 배지 재생성 시 슬롯 상태 복구
+}
+
+function startLogPowerTimer() {
+  if (logPowerTimer) return;
+  logPowerTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    // 입력 영역이 교체됐으면(좁은 옵저버가 죽은 영역을 봄) 재부착하고, 배지도 보장.
+    ensureLogPowerBadgeObserver();
+    refreshLogPowerBadge();
+  }, LOGPOWER_REFRESH_MS);
+}
+
+function stopLogPowerTimer() {
+  if (logPowerTimer) {
+    window.clearInterval(logPowerTimer);
+    logPowerTimer = 0;
+  }
+}
+
+// ══ 통나무파워 자동 획득(con-chzzk 이식) ══════════════════════════════════════
+// GET log-power로 적격 claim(state COMPLIED + saveType ACTIVE)을 찾아 PUT으로
+// 자동 획득한다. PUT은 멱등(이미 획득된 claimId 재요청해도 서버가 이중 적립 안 함)
+// 이라 con-chzzk와 동시에 켜져 있어도 안전 — 한쪽이 먼저 먹으면 다른 쪽은 실패만 함.
+// seen 추적으로 같은 claim 반복 PUT을 줄인다(메모리, 채널별).
+const LOGPOWER_CLAIM_BASE =
+  "https://api.chzzk.naver.com/service/v1/channels";
+const LOGPOWER_CLAIM_POLL_MS = 60000; // 1분마다 적격 claim 확인
+let logPowerClaimTimer = 0;
+const logPowerSeenClaims = new Map(); // channelId → Set(claimId)
+
+async function fetchLogPowerClaims(channelId) {
+  try {
+    const res = await fetch(`${LOGPOWER_CLAIM_BASE}/${channelId}/log-power`, {
+      credentials: "include",
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    const claims = json?.content?.claims;
+    return Array.isArray(claims) ? claims : [];
+  } catch {
+    return [];
+  }
+}
+
+// 적격 claim PUT(멱등). 성공/실패 무관하게 seen에 기록해 반복 PUT을 줄인다.
+async function putLogPowerClaim(channelId, claimId) {
+  try {
+    const res = await fetch(
+      `${LOGPOWER_CLAIM_BASE}/${channelId}/log-power/claims/${claimId}`,
+      { method: "PUT", credentials: "include" },
+    );
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function claimLogPowerForCurrentChannel() {
+  const channelId = getCurrentLiveChannelId();
+  if (!channelId) return;
+  const claims = await fetchLogPowerClaims(channelId);
+  if (channelId !== getCurrentLiveChannelId()) return; // 채널 전환됨
+  let seen = logPowerSeenClaims.get(channelId);
+  if (!seen) {
+    seen = new Set();
+    logPowerSeenClaims.set(channelId, seen);
+  }
+  const eligible = claims.filter(
+    (c) =>
+      c?.claimId &&
+      String(c.state || "").toUpperCase() === "COMPLIED" &&
+      String(c.saveType || "").toUpperCase() === "ACTIVE" &&
+      !seen.has(c.claimId),
+  );
+  let gained = 0;
+  let hourRewardAmount = 0; // WATCH_1_HOUR로 획득한 양(토스트 표시용)
+  for (const c of eligible) {
+    seen.add(c.claimId); // 미리 기록(중복 PUT 방지)
+    const ok = await putLogPowerClaim(channelId, c.claimId);
+    if (ok) {
+      gained += Number(c.amount) || 0;
+      // 1시간 시청 보상이면 60분 카운트다운 타이머 시작.
+      if (String(c.claimType || "").toUpperCase().includes("WATCH_1_HOUR")) {
+        hourRewardAmount += Number(c.amount) || 0;
+      }
+    }
+  }
+  if (hourRewardAmount > 0) {
+    startWatchHourTimer(channelId);
+    // 토스트(토글 켜졌을 때만): 획득량 + 채널명 + 현재 보유량(획득 반영된 최신값).
+    if (featureFlags.chatLogPowerToast) {
+      const channelName = getCurrentChannelName();
+      const total = await fetchLogPowerBalance(channelId);
+      if (channelId === getCurrentLiveChannelId()) {
+        showLogPowerToast(hourRewardAmount, channelName, total);
+      }
+    }
+  }
+  // 획득이 있었으면 표시 배지도 즉시 갱신.
+  if (gained > 0 && featureFlags.chatLogPower) refreshLogPowerBadge();
+}
+
+// 토글/페이지 전환에 따라 자동 획득 폴링을 보장. init에서 호출.
+let logPowerClaimChannelId = "";
+function applyLogPowerAutoClaim() {
+  const channelId = getCurrentLiveChannelId();
+  const on = featureFlags.chatLogPowerAuto && !!channelId;
+  if (!on) {
+    stopLogPowerClaimTimer();
+    logPowerClaimChannelId = "";
+    return;
+  }
+  // 채널이 바뀌었으면(또는 첫 진입) 즉시 1회 시도.
+  if (channelId !== logPowerClaimChannelId) {
+    logPowerClaimChannelId = channelId;
+    claimLogPowerForCurrentChannel();
+  }
+  startLogPowerClaimTimer();
+}
+
+function startLogPowerClaimTimer() {
+  if (logPowerClaimTimer) return;
+  logPowerClaimTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    claimLogPowerForCurrentChannel();
+  }, LOGPOWER_CLAIM_POLL_MS);
+}
+
+function stopLogPowerClaimTimer() {
+  if (logPowerClaimTimer) {
+    window.clearInterval(logPowerClaimTimer);
+    logPowerClaimTimer = 0;
+  }
+}
+
+// ══ 통나무파워 적립 추적 + 1시간 타이머 표시(con-chzzk 이식, content 전용) ════════
+// balances 보유량을 5분 주기로 비교해 직전 대비 증가량(delta)이 시청 보상액과 일치하면
+// '적립 중'으로 본다(휴리스틱, con-chzzk 동일). 1시간 시청 보상(WATCH_1_HOUR) 획득 시
+// 60분 카운트다운을 보여준다. 표시는 배지의 progress/timer 슬롯을 토글한다.
+const LOGPOWER_SUBSCRIBE_URL =
+  "https://api.chzzk.naver.com/commercial/v1/subscribe/channels";
+const LOGPOWER_WATCH_POLL_MS = 300000; // 5분
+const LOGPOWER_WATCH_ACTIVE_TTL_MS = 360000; // 적립 활성 6분
+const LOGPOWER_WATCH_MAX_MS = 4500000; // 최대 추적 75분
+const LOGPOWER_WATCH_AMOUNTS = [10, 12, 20]; // tier0/1/2 시청 보상액
+const LOGPOWER_HOUR_MS = 3600000; // 1시간
+const LOGPOWER_HOUR_CLAIMED_MS = 5000; // '획득' 라벨 표시 시간
+const LOGPOWER_HOUR_TIMER_KEY_PREFIX = "cheeseLogPowerHourTimer:";
+let logPowerWatchTimer = 0; // 5분 적립 체크 인터벌
+let logPowerHourInterval = 0; // 1초 카운트다운 인터벌
+let logPowerClaimedLabelTimer = 0; // '획득' 라벨 숨김 타이머
+const logPowerWatchState = new Map(); // channelId → {startedAt,lastAmount,expectedAmount,activeUntil,misses}
+const logPowerExpectedCache = new Map(); // channelId → expectedAmount(or null)
+let logPowerHourEndsAt = 0; // 현재 채널 1시간 타이머 종료 시각(0=없음)
+let logPowerHourChannelId = "";
+
+function tierToWatchAmount(tier) {
+  const n = Number(tier);
+  if (n === 2) return 20;
+  if (n === 1) return 12;
+  if (n === 0) return 10;
+  return null;
+}
+
+// 현재 채널 구독 tier로 예상 시청 보상액 조회(채널별 캐시). 실패/미구독이면 null.
+async function fetchExpectedWatchAmount(channelId) {
+  if (logPowerExpectedCache.has(channelId)) {
+    return logPowerExpectedCache.get(channelId);
+  }
+  let amount = null;
+  try {
+    const res = await fetch(LOGPOWER_SUBSCRIBE_URL, { credentials: "include" });
+    if (res.ok) {
+      const json = await res.json();
+      const list = Array.isArray(json?.content) ? json.content : [];
+      const item = list.find((x) => String(x?.channelId) === String(channelId));
+      if (item) {
+        const tierNo = Number(item.tierNo);
+        const tier = Number.isFinite(tierNo)
+          ? tierNo
+          : Number(String(item.tier || "").match(/TIER_(\d+)/i)?.[1] || 0);
+        amount = tierToWatchAmount(tier);
+      }
+    }
+  } catch {}
+  logPowerExpectedCache.set(channelId, amount);
+  return amount;
+}
+
+// 적립 추적 시작(채널 진입 시). 이미 추적 중이면 유지.
+async function startWatchRewardTracking(channelId) {
+  if (!channelId || logPowerWatchState.has(channelId)) return;
+  const expected = await fetchExpectedWatchAmount(channelId);
+  // lastAmount 기준값은 raw로 잡는다(표시용 0 폴백을 기준으로 잡으면 첫 회차에서
+  // 항목이 생기며 큰 delta가 나 오탐할 수 있음). 못 찾으면 추적 보류(다음 진입 때).
+  const baseline = await fetchLogPowerAmountRaw(channelId);
+  if (channelId !== getCurrentLiveChannelId() || baseline === undefined) return;
+  logPowerWatchState.set(channelId, {
+    startedAt: Date.now(),
+    lastAmount: baseline,
+    expectedAmount: expected, // null이면 [10,12,20] 폴백
+    activeUntil: 0,
+    misses: 0,
+  });
+}
+
+// 5분 주기 적립 판정.
+async function checkWatchRewardProgress(channelId) {
+  const state = logPowerWatchState.get(channelId);
+  if (!state) return;
+  const now = Date.now();
+  // 최대 추적 시간 경과 → 종료.
+  if (now - state.startedAt > LOGPOWER_WATCH_MAX_MS) {
+    logPowerWatchState.delete(channelId);
+    updateLogPowerIndicators();
+    return;
+  }
+  // 적립 판정은 '못 찾음'과 '0'을 구분하는 raw 조회를 쓴다(0 폴백 오탐 방지).
+  const amount = await fetchLogPowerAmountRaw(channelId);
+  if (channelId !== getCurrentLiveChannelId()) return;
+  if (amount === undefined) return; // 이번 회차 데이터 누락 → 판정 스킵(lastAmount 유지)
+  const delta = amount - Number(state.lastAmount || 0);
+  state.lastAmount = amount;
+  const targets = state.expectedAmount
+    ? [state.expectedAmount]
+    : LOGPOWER_WATCH_AMOUNTS;
+  if (targets.includes(delta)) {
+    state.activeUntil = now + LOGPOWER_WATCH_ACTIVE_TTL_MS;
+    state.misses = 0;
+  } else {
+    state.misses = Number(state.misses || 0) + 1;
+    if (state.misses >= 2) state.activeUntil = 0;
+  }
+  updateLogPowerIndicators();
+}
+
+function startWatchRewardTimer() {
+  if (logPowerWatchTimer) return;
+  logPowerWatchTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    checkWatchRewardProgress(getCurrentLiveChannelId());
+  }, LOGPOWER_WATCH_POLL_MS);
+}
+
+function stopWatchRewardTimer() {
+  if (logPowerWatchTimer) {
+    window.clearInterval(logPowerWatchTimer);
+    logPowerWatchTimer = 0;
+  }
+}
+
+// ── 1시간 시청 타이머 ──────────────────────────────────────────────────────
+function formatTimer(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// WATCH_1_HOUR 획득 시 호출. 60분 카운트다운 시작 + '획득' 라벨 5초 + storage 저장.
+function startWatchHourTimer(channelId, endsAt = Date.now() + LOGPOWER_HOUR_MS, showClaimed = true) {
+  if (!channelId) return;
+  // storage엔 항상 저장(표시를 나중에 켜도 복원되게).
+  try {
+    chrome.storage?.local?.set({
+      [`${LOGPOWER_HOUR_TIMER_KEY_PREFIX}${channelId}`]: endsAt,
+    });
+  } catch {}
+  // 표시 토글이 꺼져 있으면 카운트다운 인터벌은 돌리지 않는다(저장만). 표시를 켜면
+  // restoreWatchHourTimer가 인터벌을 시작한다.
+  if (!featureFlags.chatLogPower) return;
+  logPowerHourChannelId = channelId;
+  logPowerHourEndsAt = endsAt;
+  // '획득' 라벨 5초 표시.
+  const badge = document.getElementById(LOGPOWER_BADGE_ID);
+  const claimedEl = badge?.querySelector(".cheese-logpower-claimed");
+  if (showClaimed && claimedEl) {
+    claimedEl.hidden = false;
+    if (logPowerClaimedLabelTimer) clearTimeout(logPowerClaimedLabelTimer);
+    logPowerClaimedLabelTimer = window.setTimeout(() => {
+      claimedEl.hidden = true;
+      logPowerClaimedLabelTimer = 0;
+      renderWatchHourTimer();
+    }, LOGPOWER_HOUR_CLAIMED_MS);
+  }
+  if (logPowerHourInterval) clearInterval(logPowerHourInterval);
+  renderWatchHourTimer();
+  logPowerHourInterval = window.setInterval(renderWatchHourTimer, 1000);
+}
+
+function renderWatchHourTimer() {
+  const badge = document.getElementById(LOGPOWER_BADGE_ID);
+  if (!logPowerHourEndsAt || logPowerHourChannelId !== getCurrentLiveChannelId()) {
+    stopWatchHourTimer(false);
+    updateLogPowerIndicators();
+    return;
+  }
+  const remaining = logPowerHourEndsAt - Date.now();
+  if (remaining <= 0) {
+    clearWatchHourTimer(logPowerHourChannelId); // 만료 → 정리
+    updateLogPowerIndicators();
+    return;
+  }
+  const timeEl = badge?.querySelector(".cheese-logpower-time");
+  if (timeEl) timeEl.textContent = formatTimer(remaining);
+  updateLogPowerIndicators();
+}
+
+function stopWatchHourTimer(clearState) {
+  if (logPowerHourInterval) {
+    window.clearInterval(logPowerHourInterval);
+    logPowerHourInterval = 0;
+  }
+  if (logPowerClaimedLabelTimer) {
+    clearTimeout(logPowerClaimedLabelTimer);
+    logPowerClaimedLabelTimer = 0;
+  }
+  if (clearState) {
+    logPowerHourEndsAt = 0;
+    logPowerHourChannelId = "";
+  }
+}
+
+function clearWatchHourTimer(channelId) {
+  stopWatchHourTimer(true);
+  if (channelId) {
+    try {
+      chrome.storage?.local?.remove(
+        `${LOGPOWER_HOUR_TIMER_KEY_PREFIX}${channelId}`,
+      );
+    } catch {}
+  }
+}
+
+// 새로고침/채널 진입 시 저장된 1시간 타이머 잔여를 복원.
+async function restoreWatchHourTimer(channelId) {
+  if (!channelId) return;
+  if (logPowerHourChannelId === channelId && logPowerHourEndsAt) return;
+  try {
+    const key = `${LOGPOWER_HOUR_TIMER_KEY_PREFIX}${channelId}`;
+    const data = await chrome.storage?.local?.get(key);
+    const endsAt = Number(data?.[key]);
+    if (channelId !== getCurrentLiveChannelId()) return;
+    if (Number.isFinite(endsAt) && endsAt > Date.now()) {
+      startWatchHourTimer(channelId, endsAt, false); // 복원이라 '획득' 라벨 없음
+    } else if (endsAt) {
+      clearWatchHourTimer(channelId); // 만료된 키 정리
+    }
+  } catch {}
+}
+
+// ── 표시 통합 ──────────────────────────────────────────────────────────────
+// 적립 active / 1시간 타이머 잔여로 progress·timer 슬롯 토글. 타이머가 보이면
+// progress는 숨긴다(con-chzzk 동일).
+function updateLogPowerIndicators() {
+  const badge = document.getElementById(LOGPOWER_BADGE_ID);
+  if (!badge) return;
+  const channelId = getCurrentLiveChannelId();
+  const progress = badge.querySelector(".cheese-logpower-progress");
+  const timer = badge.querySelector(".cheese-logpower-timer");
+  const hourVisible =
+    logPowerHourChannelId === channelId &&
+    logPowerHourEndsAt > Date.now();
+  const state = logPowerWatchState.get(channelId);
+  const active = state && Number(state.activeUntil || 0) > Date.now();
+  if (timer) timer.hidden = !hourVisible;
+  if (progress) progress.hidden = !(active && !hourVisible);
+}
+
+// ── 1시간 보상 획득 토스트 ──────────────────────────────────────────────────
+// 채팅창 왼쪽 배치면 화면 좌상단에서 왼→오른쪽 슬라이드, 오른쪽(기본)이면 우상단에서
+// 오른→왼쪽 슬라이드. 잠시 표시 후 자동 사라짐.
+const LOGPOWER_TOAST_ID = "cheese-logpower-toast";
+const LOGPOWER_TOAST_MS = 6000;
+let logPowerToastTimer = 0;
+
+function showLogPowerToast(gainedAmount, channelName, totalAmount) {
+  document.getElementById(LOGPOWER_TOAST_ID)?.remove();
+  if (logPowerToastTimer) {
+    clearTimeout(logPowerToastTimer);
+    logPowerToastTimer = 0;
+  }
+  const left = document.documentElement.classList.contains(
+    "cheese-chat-left-position",
+  );
+  const toast = document.createElement("div");
+  toast.id = LOGPOWER_TOAST_ID;
+  toast.className = `cheese-logpower-toast ${left ? "is-left" : "is-right"}`;
+  toast.setAttribute("role", "status");
+  const name = channelName || "이 채널";
+  const gainStr = (Number(gainedAmount) || 0).toLocaleString("ko-KR");
+  const totalStr =
+    totalAmount == null ? "" : (Number(totalAmount) || 0).toLocaleString("ko-KR");
+  toast.innerHTML = `
+    <span class="cheese-logpower-toast-ico" aria-hidden="true">${logPowerIcon()}</span>
+    <span class="cheese-logpower-toast-body">
+      <b>1시간 시청 보상</b>으로 통나무 파워 <b>${escapeHtml(gainStr)}</b> 획득
+      ${totalStr ? `<br><span class="cheese-logpower-toast-sub">현재 ${escapeHtml(name)} 채널의 통나무 파워 ${escapeHtml(totalStr)}</span>` : ""}
+    </span>`;
+  document.body.appendChild(toast);
+  // 다음 프레임에 진입 애니메이션(transform 0).
+  requestAnimationFrame(() => toast.classList.add("is-shown"));
+  logPowerToastTimer = window.setTimeout(() => {
+    toast.classList.remove("is-shown");
+    // 슬라이드 아웃 후 제거.
+    window.setTimeout(() => toast.remove(), 320);
+    logPowerToastTimer = 0;
+  }, LOGPOWER_TOAST_MS);
+}
+
 function initLiveDetailStartTooltip() {
   const channelId = getCurrentLiveChannelId();
   if (!channelId) {
@@ -6462,10 +7257,662 @@ function applyFeatureFlags(value) {
   broadcastFeatureFlags();
   applySidebarHidden();
   applyHeaderAutoHide();
+  applyChatTweaks(); // 채팅창 정리(랭킹/미션/승부예측 숨김·너비·왼쪽배치)
   // seek preview 병기 토글 즉시 반영(이미 떠 있는 preview에 추가/제거).
   updateSeekPreviewRealtime();
   // 격리 월드 기능 즉시 반영(검색 게이트 + 댓글 타임스탬프; init이 후자도 호출).
   init();
+}
+
+// ══ 채팅창 정리(랭킹/미션/승부예측 숨김 · 너비 · 왼쪽 배치) ══════════════════
+// badge-moa-chat과 동일한 셀렉터/방식을 쓰되 우리 고유 클래스(cheese-chat-*)로
+// 마킹한다. badge-moa-chat이 채팅창을 제어 중(=<html>에 chzzk-badge-moa-* 클래스
+// 또는 DOM에 그 마커가 있음)이면 충돌을 피해 **자동 양보**한다.
+const CHAT_ASIDE_SEL = "aside#aside-chatting, aside#vod-aside";
+const CHAT_MIN_WIDTH = 220;
+const CHAT_WIDTH_KEY = "cheeseChatWidth";
+const CHAT_RESIZER_CLASS = "cheese-chat-width-resizer";
+// 채팅 폰트 크기 배율(배지 모아 챗과 동일: 0.8~2, 기본 1). settings 셀렉트로 조절.
+const CHAT_FONT_SCALE_KEY = "cheeseChatFontScale";
+const CHAT_FONT_SCALE_MIN = 0.8;
+const CHAT_FONT_SCALE_MAX = 2;
+const CHAT_FONT_SCALE_DEFAULT = 1;
+let chatFontScaleValue = CHAT_FONT_SCALE_DEFAULT;
+// 우리 숨김 마커(요소에 부착) — moa의 chzzk-badge-moa-hidden-* 와 분리.
+const CHAT_HIDE_CLASSES = {
+  chatHideRanking: "cheese-chat-hidden-ranking",
+  chatHideMission: "cheese-chat-hidden-mission",
+  chatHidePrediction: "cheese-chat-hidden-prediction",
+};
+let chatObserver = null;
+let chatWidthValue = 0; // 0이면 미설정(기본 너비)
+
+// badge-moa-chat이 '특정 채팅 기능'을 제어 중인지 개별 판정한다. moa가 그 기능을
+// 켰을 때만 해당 항목을 양보한다(글자 크기 등 무관한 moa 기능까지 양보하지 않음).
+// moa는 <html>에 기능별 클래스를 토글한다(badge-popup.css 확인).
+function moaHasChat(feature) {
+  const cl = document.documentElement?.classList;
+  if (!cl) return false;
+  switch (feature) {
+    case "chatHideRanking":
+      return cl.contains("chzzk-badge-moa-hide-chat-ranking");
+    case "chatHideMission":
+      return cl.contains("chzzk-badge-moa-hide-chat-mission");
+    case "chatHidePrediction":
+      return cl.contains("chzzk-badge-moa-hide-chat-prediction");
+    case "chatLeftPosition":
+      return cl.contains("chzzk-badge-moa-chat-left-position");
+    case "chatWidthResize":
+      // moa는 너비 조절 시 전용 리사이저를 채팅 aside에 부착한다.
+      return !!document.querySelector(".chzzk-badge-moa-chat-width-resizer");
+    case "chatFontScale":
+      return cl.contains("chzzk-badge-moa-chat-font-scale-enabled");
+    case "chatShowTime":
+      // 신버전 moa는 기능 ON 시 <html>에 enabled 클래스를 붙인다(가려진/오래된
+      // 채팅이 없어도 즉시 감지). 구버전 호환: 삽입된 시간 span 마커도 폴백으로 본다.
+      return (
+        cl.contains("chzzk-badge-moa-chat-timestamp-enabled") ||
+        !!document.querySelector(".chzzk-badge-moa-chat-time")
+      );
+    case "chatRestoreBlind":
+      // 신버전 moa는 기능 ON 시 <html>에 enabled 클래스를 붙인다(가려진 채팅이
+      // 올라오기 전에도 감지 → 중복 복원 방지). 구버전 호환: 복원 마커도 폴백.
+      return (
+        cl.contains("chzzk-badge-moa-restore-blind-enabled") ||
+        !!document.querySelector(".chzzk-badge-moa-blind-restored-text")
+      );
+    default:
+      return false;
+  }
+}
+
+// 우리가 이 기능을 실제 적용할지: 토글 ON + moa가 같은 기능을 제어하지 않음.
+function chatFeatureActive(feature) {
+  return featureFlags[feature] && !moaHasChat(feature);
+}
+
+// moa가 제어 중인 채팅 기능 목록을 storage에 기록해 settings가 토글을 비활성화할 수
+// 있게 한다(settings 팝업은 별도 문서라 페이지의 <html> 클래스를 직접 못 봄).
+const CHAT_MOA_KEYS = [
+  "chatHideRanking",
+  "chatHideMission",
+  "chatHidePrediction",
+  "chatWidthResize",
+  "chatLeftPosition",
+  "chatFontScale",
+  "chatShowTime",
+  "chatRestoreBlind",
+];
+const CHAT_MOA_ACTIVE_KEY = "cheeseChatMoaActive";
+let lastChatMoaState = "";
+
+function reportChatMoaState() {
+  const active = CHAT_MOA_KEYS.filter((k) => moaHasChat(k));
+  const sig = active.join(",");
+  if (sig === lastChatMoaState) return; // 변화 없으면 storage 쓰기 생략
+  lastChatMoaState = sig;
+  try {
+    chrome.storage?.local?.set({ [CHAT_MOA_ACTIVE_KEY]: active });
+  } catch {}
+}
+
+// 채팅 정리 기능 중 하나라도 켜져 있나(옵저버 가동 여부 판단).
+function anyChatTweakOn() {
+  return (
+    featureFlags.chatHideRanking ||
+    featureFlags.chatHideMission ||
+    featureFlags.chatHidePrediction ||
+    featureFlags.chatWidthResize ||
+    featureFlags.chatLeftPosition ||
+    Math.abs(normalizeChatFontScale(chatFontScaleValue) - 1) > 0.001
+  );
+}
+
+// 우리 숨김 마커를 전부 제거(양보/해제 시).
+function clearChatHideMarkers() {
+  for (const cls of Object.values(CHAT_HIDE_CLASSES)) {
+    document.querySelectorAll(`.${cls}`).forEach((el) => {
+      el.classList.remove(cls);
+    });
+  }
+}
+
+// 현재 '비활성(토글 off 또는 moa 양보)'인 기능의 마커만 제거한다. 활성 기능의
+// 마커는 건드리지 않아(이미 붙어 있으면 그대로) 불필요한 DOM 변경=옵저버 재발화
+// =무한 깜빡임을 막는다. (clearChatHideMarkers는 전부 제거하므로 매번 깜빡였음.)
+function clearInactiveChatHideMarkers() {
+  for (const [feature, cls] of Object.entries(CHAT_HIDE_CLASSES)) {
+    if (chatFeatureActive(feature)) continue; // 활성 기능 마커는 보존
+    document.querySelectorAll(`.${cls}`).forEach((el) => {
+      el.classList.remove(cls);
+    });
+  }
+}
+
+// 랭킹/미션/승부예측 패널에 숨김 마커를 부착(moa와 동일 셀렉터).
+function applyChatHideMarkers() {
+  const asides = document.querySelectorAll(CHAT_ASIDE_SEL);
+  asides.forEach((aside) => {
+    if (chatFeatureActive("chatHideRanking")) {
+      aside
+        .querySelectorAll("button[class*='_ranking_button_']")
+        .forEach((btn) => {
+          btn
+            .closest("[class*='_container_']")
+            ?.classList.add(CHAT_HIDE_CLASSES.chatHideRanking);
+        });
+    }
+    if (chatFeatureActive("chatHideMission")) {
+      aside
+        .querySelectorAll("button[class*='_mission_button_']")
+        .forEach((btn) => {
+          btn
+            .closest("[class*='_container_']")
+            ?.classList.add(CHAT_HIDE_CLASSES.chatHideMission);
+        });
+    }
+    if (chatFeatureActive("chatHidePrediction")) {
+      aside.querySelectorAll("[class*='_status_']").forEach((status) => {
+        const container = status.closest("[class*='_container_']");
+        if (container && container.querySelector("button[class*='_title_']")) {
+          container.classList.add(CHAT_HIDE_CLASSES.chatHidePrediction);
+        }
+      });
+    }
+  });
+}
+
+// 채팅창 너비 조절(배지 모아 챗과 동일한 방식). aside의 width/flex-basis/min-width를
+// !important로 지정하고, 좌측(왼쪽배치 시 우측) 경계에 리사이저 핸들을 단다.
+// MIN=220, MAX는 동적(영상/콘텐츠 침범 방지). 세로(stacked) 배치면 비활성·원복.
+function findResizableChatAside() {
+  const aside =
+    document.querySelector("aside#aside-chatting") ||
+    document.querySelector("aside#vod-aside");
+  if (!(aside instanceof HTMLElement)) return null;
+  // 독립 채팅 팝업(_is_popup_chat_)은 제외.
+  if (
+    aside.id === "aside-chatting" &&
+    String(aside.className || "").includes("_is_popup_chat_")
+  ) {
+    return null;
+  }
+  return aside;
+}
+
+function clampChatWidth(value, maxWidth) {
+  const n = Number(value);
+  const max =
+    Number.isFinite(maxWidth) && maxWidth > 0
+      ? Math.max(CHAT_MIN_WIDTH, Math.floor(maxWidth))
+      : Infinity;
+  if (!Number.isFinite(n) || n <= 0) return CHAT_MIN_WIDTH;
+  return Math.min(max, Math.max(CHAT_MIN_WIDTH, Math.round(n)));
+}
+
+// 채팅창이 영상 아래로 세로로 쌓인 레이아웃인지(이때 폭 조절은 영상과 어긋남).
+function isChatStackedLayout(aside) {
+  if (!(aside instanceof HTMLElement)) return false;
+  let node = aside.parentElement;
+  while (node instanceof HTMLElement && node !== document.documentElement) {
+    const cls = String(node.className || "");
+    if (cls.includes("_wrapper_") || cls.includes("layout-body")) {
+      const st = getComputedStyle(node);
+      if (
+        st.display.includes("flex") &&
+        String(st.flexDirection || "").startsWith("column")
+      ) {
+        return true;
+      }
+    }
+    node = node.parentElement;
+  }
+  const container = document.querySelector(
+    'div#layout-body[aria-label="콘텐츠"] section[class*="_container_"]',
+  );
+  if (container instanceof HTMLElement) {
+    const a = aside.getBoundingClientRect();
+    const c = container.getBoundingClientRect();
+    if (a.top > c.top + 40) return true;
+  }
+  return false;
+}
+
+// 동적 최대 너비: vod는 영상-제목 기준, 그 외는 콘텐츠 컨테이너 기준.
+function getMaxChatWidth(aside) {
+  if (aside instanceof HTMLElement && aside.id === "vod-aside") {
+    const player =
+      aside.querySelector("[class*='_player_']") ||
+      document.querySelector("aside#vod-aside [class*='_player_']");
+    const title = document.querySelector(
+      "aside#vod-aside [class*='_player_'] + [class*='_area_'] [class*='_content_'] [class*='_content_left_'] [class*='_details_'] [class*='_container_'] [class*='_row_'] h2[class*='_title_']",
+    );
+    if (player instanceof HTMLElement && title instanceof HTMLElement) {
+      const m = Math.floor(
+        player.getBoundingClientRect().width -
+          title.getBoundingClientRect().width -
+          55,
+      );
+      if (Number.isFinite(m) && m > 0) return Math.max(CHAT_MIN_WIDTH, m);
+    }
+  }
+  const container = document.querySelector(
+    'div#layout-body[aria-label="콘텐츠"] section[class*="_container_"]',
+  );
+  if (container instanceof HTMLElement) {
+    const m = Math.floor(container.getBoundingClientRect().width - 275);
+    if (Number.isFinite(m) && m > 0) return Math.max(CHAT_MIN_WIDTH, m);
+  }
+  return Infinity;
+}
+
+function setChatAsideWidth(aside, width, maxWidth) {
+  const w = clampChatWidth(width, maxWidth);
+  aside.style.setProperty("width", `${w}px`, "important");
+  aside.style.setProperty("flex-basis", `${w}px`, "important");
+  aside.style.setProperty("min-width", `${CHAT_MIN_WIDTH}px`, "important");
+  // 프로필 다이얼로그/닉네임 메뉴 팝오버가 채팅 너비에 맞게 줄어들도록 CSS 변수 설정
+  // (배지 모아 챗 syncChatResizeCssVars 동일: 다이얼로그=너비-20, 팝오버=너비-16).
+  const root = document.documentElement;
+  root.style.setProperty("--cheese-chat-resized-width", `${w}px`);
+  root.style.setProperty(
+    "--cheese-chat-profile-popup-width",
+    `${Math.max(1, w - 20)}px`,
+  );
+  root.style.setProperty(
+    "--cheese-chat-popover-width",
+    `${Math.max(1, w - 16)}px`,
+  );
+  // 라이브 미니플레이어가 채팅 너비에 맞게 줄어들도록 높이(16:9 비율) 변수 설정.
+  // (배지 모아 챗 동일: width*206/353. vod 채팅엔 미니플레이어가 없어 라이브만.)
+  if (aside.id === "aside-chatting") {
+    root.style.setProperty(
+      "--cheese-live-miniplayer-height",
+      `${Math.max(1, Math.round((w * 206) / 353))}px`,
+    );
+  }
+  normalizeChatInputHeight(aside); // 폭이 줄면 placeholder가 줄바꿈돼 입력창이 커지는 것 방지
+  return w;
+}
+
+// 빈 채팅 입력 textarea의 height를 40px로 강제(배지 모아 챗 동일). 폭이 좁아지면
+// placeholder가 줄바꿈되며 입력창 높이가 늘어나는 문제를 막는다. 입력 중/포커스
+// 상태면 건드리지 않는다.
+function normalizeChatInputHeight(aside) {
+  if (!(aside instanceof HTMLElement)) return;
+  const textarea =
+    aside.querySelector("textarea[placeholder*='채팅을 입력해주세요']") ||
+    aside.querySelector("textarea[class*='_input_']") ||
+    aside.querySelector("textarea[placeholder*='채팅']");
+  if (!(textarea instanceof HTMLTextAreaElement)) return;
+  if (!String(textarea.placeholder || "").includes("채팅")) return;
+  if (String(textarea.value || "").length > 0) return;
+  if (document.activeElement === textarea) return;
+  if (
+    textarea.style.getPropertyValue("height") === "40px" &&
+    textarea.style.getPropertyPriority("height") === "important"
+  ) {
+    return;
+  }
+  textarea.style.setProperty("height", "40px", "important");
+}
+
+function resetChatAsideWidth(aside) {
+  if (!(aside instanceof HTMLElement)) return;
+  aside.style.removeProperty("width");
+  aside.style.removeProperty("flex-basis");
+  aside.style.removeProperty("min-width");
+  // 강제했던 입력창 높이 원복.
+  const textarea =
+    aside.querySelector("textarea[placeholder*='채팅을 입력해주세요']") ||
+    aside.querySelector("textarea[class*='_input_']") ||
+    aside.querySelector("textarea[placeholder*='채팅']");
+  if (textarea instanceof HTMLTextAreaElement) {
+    textarea.style.removeProperty("height");
+  }
+  aside.querySelector(`.${CHAT_RESIZER_CLASS}`)?.remove();
+  // 프로필 다이얼로그/팝오버 너비 + 미니플레이어 높이 변수 원복(전역).
+  const root = document.documentElement;
+  root.style.removeProperty("--cheese-chat-resized-width");
+  root.style.removeProperty("--cheese-chat-profile-popup-width");
+  root.style.removeProperty("--cheese-chat-popover-width");
+  root.style.removeProperty("--cheese-live-miniplayer-height");
+}
+
+// 너비 조절 적용/해제(배지 모아 챗 syncChatWidthResize 포팅).
+function applyChatLayout() {
+  const aside = findResizableChatAside();
+  const enabled =
+    chatFeatureActive("chatWidthResize") &&
+    !isChatStackedLayout(aside) &&
+    !!aside;
+  // 너비 조절 활성 클래스(<html>): placeholder ellipsis 등 enabled 전용 CSS의 스코프.
+  document.documentElement.classList.toggle(
+    "cheese-chat-width-resize-enabled",
+    enabled,
+  );
+  // 비활성(토글 off/양보) 또는 세로 배치면 원복.
+  if (!enabled) {
+    document
+      .querySelectorAll(CHAT_ASIDE_SEL)
+      .forEach((a) => resetChatAsideWidth(a));
+    return;
+  }
+  const maxWidth = getMaxChatWidth(aside);
+  const saved = chatWidthValue >= CHAT_MIN_WIDTH ? chatWidthValue : 0;
+  const current = aside.getBoundingClientRect().width;
+  const applied = setChatAsideWidth(
+    aside,
+    saved > 0 ? saved : current,
+    maxWidth,
+  );
+  ensureChatResizer(aside, applied, maxWidth);
+}
+
+// 좌측(왼쪽배치 시 우측) 경계 리사이저. 배지 모아 챗과 동일한 드래그 방식.
+function ensureChatResizer(aside, appliedWidth, maxWidth) {
+  const existing = aside.querySelector(`.${CHAT_RESIZER_CLASS}`);
+  if (getComputedStyle(aside).position === "static") {
+    aside.style.position = "relative";
+  }
+  const handle = existing || document.createElement("div");
+  if (!existing) {
+    handle.className = CHAT_RESIZER_CLASS;
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-label", "채팅창 넓이 조절");
+    handle.title = "채팅창 넓이 조절";
+    aside.appendChild(handle);
+    bindChatResizer(handle, aside);
+  }
+  handle.setAttribute("aria-valuemin", String(CHAT_MIN_WIDTH));
+  if (Number.isFinite(maxWidth)) {
+    handle.setAttribute("aria-valuemax", String(Math.floor(maxWidth)));
+  } else {
+    handle.removeAttribute("aria-valuemax");
+  }
+  handle.setAttribute("aria-valuenow", String(appliedWidth));
+}
+
+function bindChatResizer(handle, aside) {
+  let active = false;
+  let startX = 0;
+  let startW = CHAT_MIN_WIDTH;
+  const onMove = (e) => {
+    if (!active) return;
+    e.preventDefault();
+    const deltaX = Number(e.clientX || 0) - startX;
+    // 채팅이 오른쪽이면 왼쪽으로 끌수록(deltaX 음수) 넓어진다(direction -1).
+    // 왼쪽 배치면 반대(direction +1).
+    const direction = chatFeatureActive("chatLeftPosition") ? 1 : -1;
+    const maxWidth = getMaxChatWidth(aside);
+    const next = clampChatWidth(startW + deltaX * direction, maxWidth);
+    chatWidthValue = next;
+    setChatAsideWidth(aside, next, maxWidth);
+    handle.setAttribute("aria-valuenow", String(next));
+    if (Number.isFinite(maxWidth)) {
+      handle.setAttribute("aria-valuemax", String(Math.floor(maxWidth)));
+    }
+  };
+  const onUp = () => {
+    if (!active) return;
+    active = false;
+    document.documentElement.classList.remove("cheese-chat-resizing");
+    document.removeEventListener("mousemove", onMove, true);
+    document.removeEventListener("mouseup", onUp, true);
+    saveChatWidth();
+  };
+  handle.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    active = true;
+    startX = Number(e.clientX || 0);
+    startW = clampChatWidth(
+      aside.getBoundingClientRect().width,
+      getMaxChatWidth(aside),
+    );
+    document.documentElement.classList.add("cheese-chat-resizing");
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", onUp, true);
+  });
+}
+
+function saveChatWidth() {
+  try {
+    chrome.storage?.local?.set({ [CHAT_WIDTH_KEY]: chatWidthValue });
+  } catch {}
+}
+
+// 채팅 폰트 배율 적용(배지 모아 챗과 동일). --cheese-chat-font-scale 변수 + enabled/
+// ready 클래스를 <html>에 건다. 실제 스케일은 src/chatFontScale.css가 처리한다.
+// ready는 닉네임 마크/잘림 등 배율 1에서도 필요한 보정용(항상 부착), enabled는
+// 배율이 1과 다를 때만(폰트/이모티콘 크기 변경).
+function normalizeChatFontScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return CHAT_FONT_SCALE_DEFAULT;
+  return Math.min(CHAT_FONT_SCALE_MAX, Math.max(CHAT_FONT_SCALE_MIN, n));
+}
+
+// 독립 채팅 팝업 문서인지(/live/<id>/chat 또는 aside._is_popup_chat_). 이런 팝업은
+// 치지직 자체 스케일이 있어 폰트 크기 조절을 적용하지 않는다(배지 모아 챗과 동일).
+function isStandaloneChatPopup() {
+  if (/\/live\/[^/?#]+\/chat(?:[/?#]|$)/.test(location.pathname)) return true;
+  const aside = document.querySelector("aside#aside-chatting");
+  return !!aside && String(aside.className || "").includes("_is_popup_chat_");
+}
+
+// 영상/채팅이 상하로 나뉜(stacked) 레이아웃이면 <html>에 표식을 둔다. CSS에서
+// 채팅 입력창 max-height를 40px로 제한하는 데 쓴다(채팅 팝업과 동일 처리).
+// 채팅 정리 기능 on/off와 무관하게 항상 적용한다.
+function applyChatStackedClass() {
+  const aside = findResizableChatAside();
+  const stacked = !!aside && isChatStackedLayout(aside);
+  document.documentElement.classList.toggle("cheese-chat-stacked", stacked);
+}
+
+function applyChatFontScale() {
+  const root = document.documentElement;
+  const scale = normalizeChatFontScale(chatFontScaleValue);
+  // 독립 채팅 팝업 문서면 <html>에 표식(CSS에서 입력창 max-height 제한 등에 사용).
+  root.classList.toggle("cheese-chat-popup", isStandaloneChatPopup());
+  // moa가 폰트 스케일을 제어 중이거나 독립 채팅 팝업이면 양보/미적용.
+  const on =
+    Math.abs(scale - 1) > 0.001 &&
+    !moaHasChat("chatFontScale") &&
+    !isStandaloneChatPopup();
+  if (on) {
+    root.style.setProperty("--cheese-chat-font-scale", String(scale));
+    root.classList.add("cheese-chat-font-scale-enabled");
+    root.classList.add("cheese-chat-font-scale-ready");
+  } else {
+    root.style.removeProperty("--cheese-chat-font-scale");
+    root.classList.remove("cheese-chat-font-scale-enabled");
+    root.classList.remove("cheese-chat-font-scale-ready");
+  }
+}
+
+// <html>에 왼쪽 배치 클래스를 토글(CSS로 order 처리). 단 영상/채팅이 세로로
+// 쌓인(stacked) 레이아웃에서는 order:-1이 채팅을 '영상 위'로 올려버리므로 끈다
+// (배지 모아 챗도 placeChatOnLeft && !stackedLayout 조건).
+function applyChatLeftClass() {
+  const aside = findResizableChatAside();
+  const on =
+    chatFeatureActive("chatLeftPosition") && !isChatStackedLayout(aside);
+  document.documentElement.classList.toggle("cheese-chat-left-position", on);
+}
+
+// 채팅 정리 전체 적용(양보 판단 포함). settings/onChanged/옵저버에서 호출.
+function applyChatTweaks() {
+  reportChatMoaState(); // moa 제어 상태를 settings에 알림(토글 비활성화용)
+  // 아무 토글도 안 켜졌으면 전부 정리한다. 단 moa 감시는 라이브에서 유지해야
+  // settings 토글 비활성화가 실시간 반영되므로, 라이브/다시보기면 옵저버를 둔다.
+  if (!anyChatTweakOn()) {
+    clearChatHideMarkers();
+    document
+      .querySelectorAll(CHAT_ASIDE_SEL)
+      .forEach((aside) => resetChatAsideWidth(aside));
+    document.documentElement.classList.remove("cheese-chat-left-position");
+    document.documentElement.classList.remove(
+      "cheese-chat-width-resize-enabled",
+    );
+    applyChatFontScale(); // 배율 1 → 게이트 클래스 제거
+    updateChatTweakStyle();
+    if (document.querySelector(CHAT_ASIDE_SEL)) startChatObserver();
+    else stopChatObserver();
+    return;
+  }
+  // 각 기능은 chatFeatureActive로 moa 겹침을 개별 판정해 양보한다.
+  updateChatTweakStyle();
+  clearChatHideMarkers();
+  applyChatHideMarkers();
+  applyChatLayout();
+  applyChatLeftClass();
+  applyChatFontScale();
+  startChatObserver(); // moa on/off·새 채팅 DOM 변화를 계속 추적
+}
+
+// 숨김 마커를 실제 display:none 으로 만드는 <style>(전역 1개).
+function updateChatTweakStyle() {
+  let style = document.getElementById("cheese-chat-style");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "cheese-chat-style";
+    (document.head || document.documentElement).appendChild(style);
+  }
+  style.textContent = `
+    .${CHAT_HIDE_CLASSES.chatHideRanking},
+    .${CHAT_HIDE_CLASSES.chatHideMission},
+    .${CHAT_HIDE_CLASSES.chatHidePrediction} { display: none !important; }
+    html.cheese-chat-left-position aside#aside-chatting { order: -1 !important; }
+    /* 왼쪽 배치 시 뷰포트 고정형 프로필 카드가 오른쪽에 뜨는 것을 좌측으로 보정
+       (인라인 _is_bottom_/_is_top_ 변형은 자체 위치라 제외). */
+    html.cheese-chat-left-position
+      [class*="_container_1hyev_"]:not([class*="_new_window_"]):not([class*="_is_bottom_"]):not([class*="_is_top_"]) {
+      right: auto !important; left: 10px !important;
+    }
+    /* 리사이저 핸들(배지 모아 챗과 동일: 8px 폭, 중앙 2px 막대, 호버/드래그 시 파란색). */
+    aside#aside-chatting .${CHAT_RESIZER_CLASS},
+    aside#vod-aside .${CHAT_RESIZER_CLASS} {
+      position: absolute; top: 0; bottom: 0; left: 0;
+      width: 8px; z-index: 2147482500;
+      cursor: col-resize; pointer-events: auto; touch-action: none;
+    }
+    html.cheese-chat-left-position aside#aside-chatting .${CHAT_RESIZER_CLASS} {
+      left: auto; right: 0;
+    }
+    aside#aside-chatting .${CHAT_RESIZER_CLASS}::before,
+    aside#vod-aside .${CHAT_RESIZER_CLASS}::before {
+      content: ""; position: absolute; top: 10px; bottom: 10px; left: 0;
+      width: 2px; border-radius: 999px;
+      background: rgba(93, 191, 255, 0);
+      transition: background-color 0.16s ease;
+    }
+    html.cheese-chat-left-position aside#aside-chatting .${CHAT_RESIZER_CLASS}::before {
+      left: auto; right: 0;
+    }
+    aside#aside-chatting .${CHAT_RESIZER_CLASS}:hover::before,
+    aside#vod-aside .${CHAT_RESIZER_CLASS}:hover::before,
+    html.cheese-chat-resizing aside#aside-chatting .${CHAT_RESIZER_CLASS}::before,
+    html.cheese-chat-resizing aside#vod-aside .${CHAT_RESIZER_CLASS}::before {
+      background: rgba(93, 191, 255, 0.72);
+    }
+    html.cheese-chat-resizing, html.cheese-chat-resizing * {
+      cursor: col-resize !important; user-select: none !important;
+    }
+    /* 너비 조절 시 채팅 입력창 placeholder가 줄바꿈되지 않고 …으로 잘리게(배지 모아 챗 동일). */
+    html.cheese-chat-width-resize-enabled aside#aside-chatting textarea[placeholder*="채팅"]:placeholder-shown {
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+      white-space: nowrap !important;
+    }
+    html.cheese-chat-width-resize-enabled aside#aside-chatting textarea[placeholder*="채팅"]::placeholder {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }`;
+}
+
+// 우리가 채팅에 거는 마커/클래스(접두사). 옵저버가 '우리 자신의 변경'은 무시해
+// 무한 재처리(깜빡임)에 빠지지 않도록 식별에 쓴다.
+function isOwnChatMutation(mutation) {
+  const t = mutation.target;
+  if (!(t instanceof Element)) return false;
+  // 우리 마커가 붙은/리사이저인 요소의 변경은 우리가 일으킨 것.
+  const cls = typeof t.className === "string" ? t.className : "";
+  if (
+    cls.includes("cheese-chat-hidden-") ||
+    cls.includes("cheese-chat-width-resizer")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function startChatObserver() {
+  if (chatObserver) return;
+  // (1) 채팅 컨테이너 구조 변화(새 채팅 행 = 마커 붙일 대상)만 본다. class 속성은
+  //     보지 않는다 — 우리가 마커 클래스를 추가하면 그게 또 옵저버를 깨워 무한
+  //     루프(깜빡임)가 됐다. moa도 childList/subtree만 본다.
+  chatObserver = new MutationObserver((mutations) => {
+    // 우리 마커 추가만으로 일어난 변경이면(타 변경 없음) 무시한다.
+    if (mutations.every(isOwnChatMutation)) return;
+    scheduleChatTweak();
+  });
+  chatObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+  // (2) <html> 자기 자신의 class만 본다(subtree 없음) — moa enabled 클래스
+  //     토글을 감지하기 위함. 채팅 행 마커는 여기 안 걸린다.
+  if (!chatHtmlClassObserver) {
+    chatHtmlClassObserver = new MutationObserver(() => scheduleChatTweak());
+    chatHtmlClassObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+  // 창 리사이즈로 세로(stacked) 배치 전환·동적 최대폭이 바뀌므로 재적용.
+  window.addEventListener("resize", scheduleChatTweak);
+}
+let chatTweakRaf = 0;
+let chatHtmlClassObserver = null;
+
+function scheduleChatTweak() {
+  if (chatTweakRaf) return;
+  chatTweakRaf = requestAnimationFrame(() => {
+    chatTweakRaf = 0;
+    applyChatTweaksLight(); // moa 등장/퇴장·stacked 전환도 여기서 반영됨
+  });
+}
+
+function stopChatObserver() {
+  if (chatObserver) {
+    chatObserver.disconnect();
+    chatObserver = null;
+  }
+  if (chatHtmlClassObserver) {
+    chatHtmlClassObserver.disconnect();
+    chatHtmlClassObserver = null;
+  }
+  window.removeEventListener("resize", scheduleChatTweak);
+}
+
+// 옵저버용 경량 적용: 새 패널에 마커만 다시 붙이고 레이아웃 보정(전체 재구성 X).
+function applyChatTweaksLight() {
+  reportChatMoaState(); // moa 상태 변화(<html> 클래스 토글)도 옵저버가 잡아 갱신
+  if (!anyChatTweakOn()) {
+    applyChatTweaks();
+    return;
+  }
+  // 비활성(양보/off) 기능의 마커만 제거하고, 활성 기능 마커는 보존한다. 활성
+  // 마커를 매번 제거→재추가하면 그 DOM 변경이 옵저버를 다시 깨워 무한 깜빡임이
+  // 발생했다(applyChatHideMarkers는 classList.add라 이미 있으면 no-op).
+  clearInactiveChatHideMarkers();
+  applyChatHideMarkers();
+  applyChatLayout(); // 양보/세로배치/원복 판단을 자체 처리
+  applyChatLeftClass();
+  applyChatFontScale();
 }
 
 // 사이드바 숨김(전체 + 항목/섹션별)을 <style> 규칙으로 토글한다. CSS라 SPA
@@ -8701,6 +10148,7 @@ function broadcastFeatureFlags() {
       syncPreset: syncPresetValue,
       syncCustom: syncCustomValue, // {enable,target} 또는 null
       mixerAlwaysOn, // 오디오 믹서 항상 켜기(전역)
+      videoFilterAlwaysOn, // 비디오 필터 항상 켜기(전역)
     },
     location.origin,
   );
@@ -8714,11 +10162,18 @@ async function loadFeatureFlags() {
       SYNC_PRESET_KEY,
       SYNC_CUSTOM_KEY,
       MIXER_ALWAYS_ON_KEY,
+      VIDEO_FILTER_ALWAYS_ON_KEY,
+      CHAT_WIDTH_KEY,
+      CHAT_FONT_SCALE_KEY,
     ]);
     syncPresetValue = normalizeSyncPresetValue(data?.[SYNC_PRESET_KEY]);
     const custom = data?.[SYNC_CUSTOM_KEY];
     syncCustomValue = custom && typeof custom === "object" ? custom : null;
     mixerAlwaysOn = data?.[MIXER_ALWAYS_ON_KEY] === true;
+    videoFilterAlwaysOn = data?.[VIDEO_FILTER_ALWAYS_ON_KEY] === true;
+    const cw = Number(data?.[CHAT_WIDTH_KEY]);
+    chatWidthValue = Number.isFinite(cw) ? cw : 0;
+    chatFontScaleValue = normalizeChatFontScale(data?.[CHAT_FONT_SCALE_KEY]);
     applyFeatureFlags(data?.[FEATURE_HIDDEN_KEY]); // 내부에서 broadcast
   } catch {
     // 실패 시 전부 표시(기본값) 유지.
@@ -8739,6 +10194,21 @@ if (chrome.storage?.onChanged) {
     }
     if (changes[MIXER_ALWAYS_ON_KEY]) {
       mixerAlwaysOn = changes[MIXER_ALWAYS_ON_KEY].newValue === true;
+    }
+    if (changes[VIDEO_FILTER_ALWAYS_ON_KEY]) {
+      videoFilterAlwaysOn =
+        changes[VIDEO_FILTER_ALWAYS_ON_KEY].newValue === true;
+    }
+    if (changes[CHAT_WIDTH_KEY]) {
+      const v = Number(changes[CHAT_WIDTH_KEY].newValue);
+      chatWidthValue = Number.isFinite(v) ? v : 0;
+      applyChatLayout();
+    }
+    if (changes[CHAT_FONT_SCALE_KEY]) {
+      chatFontScaleValue = normalizeChatFontScale(
+        changes[CHAT_FONT_SCALE_KEY].newValue,
+      );
+      applyChatTweaks(); // 폰트 배율 변경 → 전체 재적용(옵저버 가동 포함)
     }
     if (changes[CHANNEL_LIVE_BUTTON_KEY]) {
       channelLiveButtonOn = changes[CHANNEL_LIVE_BUTTON_KEY].newValue !== false;
@@ -8779,7 +10249,8 @@ if (chrome.storage?.onChanged) {
     } else if (
       changes[SYNC_PRESET_KEY] ||
       changes[SYNC_CUSTOM_KEY] ||
-      changes[MIXER_ALWAYS_ON_KEY]
+      changes[MIXER_ALWAYS_ON_KEY] ||
+      changes[VIDEO_FILTER_ALWAYS_ON_KEY]
     ) {
       broadcastFeatureFlags(); // 프리셋/커스텀/항상켜기만 바뀐 경우도 전달
     }
@@ -8817,6 +10288,9 @@ function init() {
   ensureHeaderObserver(); // 헤더 재렌더로 사라지면 즉시 복구
   applyHeaderAutoHide(); // 자동 숨김 켜져 있으면 새 헤더 요소에 리스너 보정
   ensureChannelLiveButton(); // 채널 홈 탭리스트에 라이브 바로가기 버튼 보장
+  applyChatStackedClass(); // 상하 분할 시 채팅 입력창 높이 제한(채팅 기능 무관, 항상)
+  applyLogPowerBadge(); // 현재 채널 보유 통나무파워 배지(라이브 + 토글 시)
+  applyLogPowerAutoClaim(); // 통나무파워 자동 획득(라이브 + 토글 시)
 
   cleanupStudioMakeClipViewIfInactive();
 
@@ -9146,6 +10620,10 @@ function isCheeseSearchOwnedNode(node) {
 
 const observer = new MutationObserver(scheduleInitFromMutations);
 observer.observe(document.documentElement, { childList: true, subtree: true });
+// 창 너비 변화로 상하 분할(stacked) 전환 → 채팅 입력창 높이 제한 클래스 갱신.
+window.addEventListener("resize", debounce(applyChatStackedClass, 150), {
+  passive: true,
+});
 ensureScrollTopButton();
 window.addEventListener("scroll", debounce(handleWindowScroll, 120), {
   passive: true,
@@ -9361,6 +10839,8 @@ window.addEventListener("message", (event) => {
 // audioMixer:presets 전역 키에 따로 저장한다.
 const AUDIO_MIXER_STORAGE_PREFIX = "audioMixer:";
 const AUDIO_MIXER_PRESETS_KEY = "audioMixer:presets";
+// '기본' 프리셋을 대체하는 커스텀 프리셋 id(전역, 모든 채널 공유).
+const AUDIO_MIXER_DEFAULT_CUSTOM_KEY = "audioMixer:defaultCustomId";
 
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
@@ -9373,23 +10853,31 @@ window.addEventListener("message", (event) => {
   if (data.type === "save") {
     try {
       const incoming = data.state || {};
-      // customPresets는 전역으로, 나머지는 per-media로 분리 저장.
-      const { customPresets, ...perMedia } = incoming;
+      // customPresets·defaultCustomId는 전역으로, 나머지는 per-media로 분리 저장.
+      const { customPresets, defaultCustomId, ...perMedia } = incoming;
       const toSet = { [key]: perMedia };
       if (Array.isArray(customPresets)) {
         toSet[AUDIO_MIXER_PRESETS_KEY] = customPresets;
+      }
+      if (typeof defaultCustomId === "string") {
+        toSet[AUDIO_MIXER_DEFAULT_CUSTOM_KEY] = defaultCustomId;
       }
       chrome.storage.local.set(toSet);
     } catch {}
   } else if (data.type === "load") {
     try {
-      chrome.storage.local.get([key, AUDIO_MIXER_PRESETS_KEY], (result) => {
+      chrome.storage.local.get(
+        [key, AUDIO_MIXER_PRESETS_KEY, AUDIO_MIXER_DEFAULT_CUSTOM_KEY],
+        (result) => {
         const saved = result?.[key] || null;
         const presets = result?.[AUDIO_MIXER_PRESETS_KEY] || [];
-        // per-media 설정에 전역 커스텀 프리셋을 합쳐서 반환.
+        const defaultCustomId = String(
+          result?.[AUDIO_MIXER_DEFAULT_CUSTOM_KEY] || "",
+        );
+        // per-media 설정에 전역 커스텀 프리셋·기본값 id를 합쳐서 반환.
         const merged = saved
-          ? { ...saved, customPresets: presets }
-          : { customPresets: presets };
+          ? { ...saved, customPresets: presets, defaultCustomId }
+          : { customPresets: presets, defaultCustomId };
         window.postMessage(
           {
             source: "cheese-audio-mixer-content",
@@ -9399,7 +10887,8 @@ window.addEventListener("message", (event) => {
           },
           location.origin,
         );
-      });
+        },
+      );
     } catch {}
   }
 });

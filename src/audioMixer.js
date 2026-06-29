@@ -387,6 +387,8 @@
     limiter: { enabled: true, threshold: -1 },
     normalizer: { enabled: true, target: 0.12 },
     customPresets: [],
+    // '기본' 프리셋을 대체하는 커스텀 프리셋 id(전역). 빈 문자열이면 PRESETS.default.
+    defaultCustomId: "",
   });
 
   // ── 오디오 그래프 ────────────────────────────────────────────────────────
@@ -776,6 +778,26 @@
   function applyPreset(key) {
     const p = PRESETS[key];
     if (!p) return;
+    // '기본' 칩이 커스텀으로 대체돼 있으면(defaultCustomId), 그 커스텀 스냅샷을 적용한다.
+    // preset 키는 "default"로 두어 칩 활성/라벨이 '기본'에 머물게 한다.
+    if (key === "default") {
+      const custom = effectiveDefaultCustom();
+      if (custom) {
+        ensureMixerEnabled();
+        state.preset = "default";
+        const snapshot = cloneMixerSnapshot(custom.snapshot);
+        state.gain = snapshot.gain;
+        state.eq = snapshot.eq;
+        state.comp = snapshot.comp;
+        state.limiter = snapshot.limiter;
+        state.normalizer = snapshot.normalizer;
+        clearPresetDirty();
+        applyState();
+        saveState();
+        syncUI();
+        return;
+      }
+    }
     ensureMixerEnabled();
     state.preset = key;
     // builtInPresetSnapshot과 같은 정규화로 적용해 '동일여부 비교'와 어긋나지 않게 한다.
@@ -789,6 +811,42 @@
     applyState();
     saveState();
     syncUI();
+  }
+
+  // '기본' 칩을 대체하는 커스텀 프리셋 객체(유효할 때만). 없으면 null → PRESETS.default.
+  function effectiveDefaultCustom() {
+    const id = String(state.defaultCustomId || "");
+    if (!id) return null;
+    return (
+      normalizeCustomPresets(state.customPresets).find((p) => p.id === id) ||
+      null
+    );
+  }
+
+  // '기본' 프리셋 칩에 표시할 라벨. 커스텀으로 대체됐으면 "기본 (이름)".
+  function defaultPresetLabel() {
+    const custom = effectiveDefaultCustom();
+    return custom
+      ? `${PRESETS.default.label} (${custom.name})`
+      : PRESETS.default.label;
+  }
+
+  // 기본값 등록/해제.
+  function setDefaultCustomPreset(id) {
+    const exists = normalizeCustomPresets(state.customPresets).some(
+      (p) => p.id === id,
+    );
+    if (!exists) return;
+    state.defaultCustomId = id;
+    saveState();
+    refreshPanelContent();
+  }
+
+  function unsetDefaultCustomPreset() {
+    if (!state.defaultCustomId) return;
+    state.defaultCustomId = "";
+    saveState();
+    refreshPanelContent();
   }
 
   // head의 "초기화": 값 조정 전에 적용돼 있던 프리셋 값으로 되돌린다.
@@ -1172,6 +1230,9 @@
       (preset) => preset.id !== id,
     );
     const wasActive = state.preset === id;
+    // 기본값으로 등록돼 있던 커스텀이 삭제되면 원래 기본(PRESETS.default)으로 복귀.
+    const wasDefault = state.defaultCustomId === id;
+    if (wasDefault) state.defaultCustomId = "";
     if (customDraft?.id === id) {
       customDraft = null;
       draftBackup = null; // 편집 중이던 프리셋이 삭제됨 → 복원 대상 무효
@@ -1446,6 +1507,7 @@
       limiter: { ...state.limiter },
       normalizer: { ...state.normalizer },
       customPresets: normalizeCustomPresets(state.customPresets),
+      defaultCustomId: String(state.defaultCustomId || ""),
     };
   }
 
@@ -1472,7 +1534,29 @@
             ...(saved.normalizer || {}),
           },
           customPresets: normalizeCustomPresets(saved.customPresets),
+          defaultCustomId: String(saved.defaultCustomId || ""),
         };
+        // 기본값으로 등록된 커스텀이 더 이상 없으면(삭제됨) 등록 해제 → 원래 기본 복귀.
+        if (
+          state.defaultCustomId &&
+          !state.customPresets.some((p) => p.id === state.defaultCustomId)
+        ) {
+          state.defaultCustomId = "";
+        }
+        // '기본' 칩이 활성(preset==="default")인 채널에 기본값 커스텀이 등록돼
+        // 있으면, 그 커스텀 스냅샷을 기본값으로 반영한다(저장된 audio 값은 PRESETS.
+        // default 기준이라 자동으로는 안 바뀌므로 여기서 덮어쓴다).
+        if (state.preset === "default") {
+          const custom = effectiveDefaultCustom();
+          if (custom) {
+            const snapshot = cloneMixerSnapshot(custom.snapshot);
+            state.gain = snapshot.gain;
+            state.eq = snapshot.eq;
+            state.comp = snapshot.comp;
+            state.limiter = snapshot.limiter;
+            state.normalizer = snapshot.normalizer;
+          }
+        }
         // userDisabled 채널인데 로드 전 자동 활성화가 먼저 켰을 수 있다(레이스).
         // 저장된 의사를 존중해 확실히 끈다.
         if (state.userDisabled && audio.connected) {
@@ -1823,7 +1907,7 @@
     const presetButtons = Object.entries(PRESETS)
       .map(
         ([key, p]) =>
-          `<button type="button" class="cheese-mixer-preset" data-preset="${key}">${p.label}</button>`,
+          `<button type="button" class="cheese-mixer-preset" data-preset="${key}">${key === "default" ? escapeHtml(defaultPresetLabel()) : p.label}</button>`,
       )
       .join("");
     const eqSliders = EQ_BANDS.map(
@@ -2032,6 +2116,11 @@
 
   function renderCustomPresetItem(preset) {
     const modeLabel = preset.mode === "expert" ? "전문가" : "고급";
+    const isDefault = state.defaultCustomId === preset.id;
+    // 별 아이콘: 채움=기본값으로 등록됨(클릭 시 해제), 비움=등록 가능(클릭 시 등록).
+    const starIcon = isDefault
+      ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.9L12 16.9 6.8 19.2l1-5.9L3.5 9.2l5.9-.9L12 3Z"/></svg>`
+      : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.9L12 16.9 6.8 19.2l1-5.9L3.5 9.2l5.9-.9L12 3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>`;
     return `
       <div class="cheese-mixer-custom-item">
         <div class="cheese-mixer-custom-select ${state.preset === preset.id ? "is-active" : ""}">
@@ -2040,6 +2129,9 @@
             <span>${modeLabel}</span>
           </button>
           <div class="cheese-mixer-custom-actions">
+            <button type="button" class="cheese-mixer-custom-icon-button ${isDefault ? "is-default" : ""}" data-action="${isDefault ? "custom-unset-default" : "custom-set-default"}" data-custom-id="${escapeAttribute(preset.id)}" aria-label="${isDefault ? "기본값 해제" : "기본값으로 등록"}" title="${isDefault ? "기본값 해제" : "기본값으로 등록"}">
+              ${starIcon}
+            </button>
             <button type="button" class="cheese-mixer-custom-icon-button" data-action="custom-edit" data-custom-id="${escapeAttribute(preset.id)}" aria-label="수정">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M4 20h4.2L19 9.2 14.8 5 4 15.8V20Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
@@ -2391,6 +2483,14 @@
     }
     if (action === "custom-delete" && id) {
       openCustomDialog("delete", id);
+      return true;
+    }
+    if (action === "custom-set-default" && id) {
+      setDefaultCustomPreset(id);
+      return true;
+    }
+    if (action === "custom-unset-default") {
+      unsetDefaultCustomPreset();
       return true;
     }
     if (action === "custom-edit-confirm" && id) {

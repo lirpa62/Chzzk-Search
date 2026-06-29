@@ -1,0 +1,563 @@
+/* 치즈 플래터 — 채팅창 폰트 크기 조절
+   배지 모아 챗(badge-moa-chat)의 채팅 폰트/배지 크기 조절 CSS를 그대로 이식하고
+   클래스/변수 접두사만 chzzk-badge-moa- → cheese- 로 바꾼 것. 엣지 케이스(닉네임
+   잘림·이모티콘 줄높이·배지 아이콘·하단 고정 메시지 정렬 등)를 동일하게 처리한다.
+   적용 게이트: <html>.cheese-chat-font-scale-enabled / -ready + --cheese-chat-font-scale. */
+
+/* === 채팅 폰트/배지 크기 조절 (치지직 네이티브 방식: 단일 절대기준 × 배율) === */
+/* 우리 CSS는 임베디드 라이브/다시보기 채팅에서만 동작한다. 채팅 팝업에는 치지직
+   네이티브 스케일이 있어 popup.js의 getEffectiveChatFontScale가 배율을 1 이하로 cap하고
+   -enabled 게이트를 끈다.
+   스코프는 채팅 aside(aside#aside-chatting / aside#vod-aside) + 채팅 행 클래스
+   (_item_ / live_chatting_list_item / vod_chatting_item) 로 잡는다. [role="log"]
+   같은 리스트 컨테이너에 의존하지 않는다 — 상단 고정 메시지가 있으면 [role="log"] 가
+   _fixed_ 쪽에 붙고 실제 행이 형제/내부 _wrapper_sg7hy_ 로 옮겨가서 컨테이너 기준
+   셀렉터가 깨졌기 때문이다.
+   상단 고정 메시지/미션은 _item_ 으로 감싸지지 않고 별도 컨테이너
+   (_container_dba1a_ / _container_m8d10_)를 쓰므로, 행 클래스 게이트만으로 자연히
+   제외된다(_fixed_ 조상 가드는 행이 _fixed_ 내부에 중첩될 때 정상 행까지 죽여서 제거).
+   하단 고정 메시지(_floating_)는 스케일 대상에 포함, 프로필 다이얼로그
+   ([role="alertdialog"])·도네/구독/티커 오버레이는 컨테이너 레벨 :not() 으로 제외한다. */
+:root {
+  --cheese-chat-font-scale: 1;
+  --cheese-chat-badge-icon-size: 18px;
+  --cheese-chat-nickname-mark-size: 14px;
+  --cheese-chat-emoji-size: 24px;
+  --cheese-chat-emoji-gap: max(
+    1px,
+    calc(2px * var(--cheese-chat-font-scale))
+  );
+}
+
+/* 스케일 대상 스코프:
+   - 일반 채팅 행: _item_(팝업) / live_chatting_list_item(라이브) /
+     vod_chatting_item(다시보기) — 셋 다 포함. 이 행 클래스 게이트가 상단 고정
+     메시지/미션(_container_dba1a_/_container_m8d10_)을 자연히 배제한다.
+   - 하단 고정 메시지: _floating_ (별도 분기)
+   오버레이/미션/도네/구독 마커는 메시지/닉네임 컨테이너 레벨에서 :not() 체인으로 제외. */
+
+/* 1. 메시지 텍스트 폰트/줄높이 — 컨테이너 + 메시지 텍스트 노드(_text_1s877_)에 직접 적용.
+   치지직이 _text_1s877_ 에 자체 font-size를 주므로 컨테이너 상속만으론 변화가 없어 직접 지정한다.
+   절대 px 이므로 컨테이너와 동일 값을 자식에 줘도 누적되지 않는다.
+   닉네임 영역(_nickname_1s877_ / _container_o04z9_)은 규칙 2에서 처리.
+   하단 고정 메시지 버튼은 _chatting_message_ 가 아니라 _message_dswob_ 텍스트 노드를 쓴다. */
+/* 1-0. 메시지 컨테이너(_chatting_message_) 줄높이 — 치지직 네이티브는 _chatting_message_
+   자체에 line-height 를 주고(기본 20px), 이모티콘이 포함된 메시지(_button_ img)는 더 큰
+   줄높이로 키운다(175%≈텍스트 35px / 이모티콘 44px). 이모티콘 행은 이모티콘 높이
+   (emoji-size × 배율)에 맞춰 줄높이를 잡는다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    [class*="_item_"],
+    [class*="live_chatting_list_item"],
+    [class*="vod_chatting_item"]
+  )
+  [class*="_chatting_message_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"]) {
+  line-height: calc(
+    14px * var(--cheese-chat-font-scale) * 1.4
+  ) !important;
+}
+
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    [class*="_item_"],
+    [class*="live_chatting_list_item"],
+    [class*="vod_chatting_item"]
+  )
+  [class*="_chatting_message_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"]):has(
+    [class*="_button_"] img
+  ) {
+  line-height: calc(
+    var(--cheese-chat-emoji-size) *
+      var(--cheese-chat-font-scale) + 2px
+  ) !important;
+}
+
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    [class*="_item_"],
+    [class*="live_chatting_list_item"],
+    [class*="vod_chatting_item"]
+  )  [class*="_chatting_message_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"])
+  > [class*="_text_"],
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_chatting_message_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"])
+  > [class*="_text_"],
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_message_dswob_"] {
+  font-size: calc(14px * var(--cheese-chat-font-scale)) !important;
+  line-height: calc(
+    14px * var(--cheese-chat-font-scale) * 1.4
+  ) !important;
+}
+
+/* 1-0b. 이모티콘이 포함된 메시지의 텍스트 노드(_text_)도 컨테이너와 동일하게 이모티콘
+   높이 기준 줄높이로 맞춰, 인라인 이모티콘이 잘리거나 줄이 좁아지지 않게 한다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    [class*="_item_"],
+    [class*="live_chatting_list_item"],
+    [class*="vod_chatting_item"]
+  )
+  [class*="_chatting_message_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"])
+  > [class*="_text_"]:has([class*="_button_"] img) {
+  line-height: calc(
+    var(--cheese-chat-emoji-size) *
+      var(--cheese-chat-font-scale) + 2px
+  ) !important;
+}
+
+/* 1-1. 하단 고정 메시지 버튼 높이 — 치지직 네이티브는 34px(기본)→56px(175%)로 폰트
+   배율에 따라 높이가 함께 커진다. base 34px × 배율로 비례 확대한다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_button_chatting_dswob_"] {
+  height: calc(34px * var(--cheese-chat-font-scale)) !important;
+  align-items: center !important;
+}
+
+/* 1-1a. 하단 고정 메시지 버튼 내부 정렬 — 버튼은 flex(align-items:center)지만 닉네임
+   래퍼(_username_dswob_) 안의 _container_o04z9_ 가 vertical-align:top + _is_message_
+   음수 마진을 써서 배지·닉네임 줄과 메시지(_message_dswob_)가 어긋난다.
+   래퍼/컨테이너를 flex 중앙 정렬로 맞추고 음수 마진을 제거한다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_button_chatting_dswob_"]  [class*="_username_dswob_"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  min-width: 0 !important;
+}
+
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_button_chatting_dswob_"]  [class*="_username_dswob_"]
+  [class*="_container_o04z9_"] {
+  align-items: center !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  vertical-align: middle !important;
+}
+
+/* 1-1b. 하단 고정 메시지 펼침 화살표 아이콘(_icon_dswob_) — 폰트 배율에 따라 함께 확대.
+   기준 22px. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_button_chatting_dswob_"]  [class*="_icon_dswob_"] {
+  width: calc(22px * var(--cheese-chat-font-scale)) !important;
+  height: calc(22px * var(--cheese-chat-font-scale)) !important;
+  flex: 0 0 calc(22px * var(--cheese-chat-font-scale)) !important;
+}
+
+/* 1-2. 닉네임 버튼(_nickname_1s877_)과 메시지 텍스트(_text_1s877_)의 세로 정렬.
+   배율을 키우면 인라인 닉네임 블록(배지 포함)과 메시지 텍스트의 높이가 달라져
+   기준선이 어긋난다. 치지직 네이티브가 _scale_ 시 닉네임을 vertical-align:middle 로
+   바꾸는 것과 동일하게 둘 다 middle 로 맞춘다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_chatting_message_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"])
+  > :is([class*="_nickname_1s877_"], [class*="_text_1s877_"]) {
+  vertical-align: middle !important;
+}
+
+/* 1-3. 메시지 텍스트가 닉네임 인라인 박스 안의 _container_o04z9_ 도 middle 로 맞춰
+   배지·닉네임 글자가 같은 중앙선에 오도록 한다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_nickname_1s877_"]  > [class*="_container_o04z9_"] {
+  vertical-align: middle !important;
+}
+
+/* 2. 닉네임 영역(_container_o04z9_) + 닉네임 텍스트 노드(_text_dtc6c_).
+   닉네임 텍스트도 치지직 자체 font-size 가 있어 컨테이너에서 직접 지정한다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_container_o04z9_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"]),
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_container_o04z9_"]:not(
+    [class*="_is_mission_"]
+  ):not([class*="_is_donation_"]):not([class*="_donation_alarm_"]):not(
+    [class*="_is_subscription_"]
+  ):not([class*="_is_ticker_overlay_"]):not([class*="_is_overlay_"])
+  [class*="_text_dtc6c_"] {
+  font-size: calc(14px * var(--cheese-chat-font-scale)) !important;
+  line-height: calc(
+    14px * var(--cheese-chat-font-scale) * 1.2
+  ) !important;
+}
+
+/* 3. 환영/필터/안내(_default_) 시스템 메시지 — 치지직과 동일하게 스케일(기준 13px) */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_container_"]:is(
+    [class*="_welcome_"],
+    [class*="_filter_"],
+    [class*="_default_"]
+  ) {
+  font-size: calc(13px * var(--cheese-chat-font-scale)) !important;
+  line-height: calc(
+    13px * var(--cheese-chat-font-scale) * 1.4
+  ) !important;
+}
+
+/* 3-0. 안내 메시지(_default_)의 제목/설명 문단 — 치지직이 _title_/_description_ 에 자체
+   font-size 를 줘서 컨테이너 상속만으론 변하지 않으므로 직접 지정한다.
+   기준: 제목 13px, 설명 12px. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_container_"]:is(
+    [class*="_welcome_"],
+    [class*="_filter_"],
+    [class*="_default_"]
+  )  [class*="_title_1fbww_"] {
+  font-size: calc(13px * var(--cheese-chat-font-scale)) !important;
+  line-height: calc(
+    13px * var(--cheese-chat-font-scale) * 1.4
+  ) !important;
+}
+
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_container_"]:is(
+    [class*="_welcome_"],
+    [class*="_filter_"],
+    [class*="_default_"]
+  )  [class*="_description_1fbww_"] {
+  font-size: calc(12px * var(--cheese-chat-font-scale)) !important;
+  line-height: calc(
+    12px * var(--cheese-chat-font-scale) * 1.4
+  ) !important;
+}
+
+/* 3-1. 필터/공지 시스템 메시지 아이콘(_icon_1fbww_59) — 치지직 네이티브는 폰트 배율에
+   따라 아이콘(기준 20px)과 우측 여백(기준 10px)이 함께 커진다(175%≈34px/18px). */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_container_"]:is([class*="_welcome_"], [class*="_filter_"])
+  [class*="_icon_1fbww_"] {
+  width: calc(15px * var(--cheese-chat-font-scale)) !important;
+  height: calc(15px * var(--cheese-chat-font-scale)) !important;
+  min-width: calc(15px * var(--cheese-chat-font-scale)) !important;
+  flex: 0 0 calc(15px * var(--cheese-chat-font-scale)) !important;
+  margin-right: calc(10px * var(--cheese-chat-font-scale)) !important;
+}
+
+/* 4. 이모티콘 버튼 래퍼 */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_chatting_message_"]  [class*="_text_"]
+  button[class*="_button_"] {
+  width: calc(
+    var(--cheese-chat-emoji-size) *
+      var(--cheese-chat-font-scale) +
+      var(--cheese-chat-emoji-gap)
+  ) !important;
+  height: calc(
+    var(--cheese-chat-emoji-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  margin-right: 0 !important;
+}
+
+/* 5. 이모티콘 img — 일반 채팅은 _chatting_message_ _text_ img, 하단 고정 메시지는
+   이모티콘이 _message_dswob_ 바로 아래 img 로 들어간다(배지는 _wrapper_o04z9_ 안이라 제외). */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_chatting_message_"]  [class*="_text_"]
+  img,
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  [class*="_floating_"]
+  [class*="_message_dswob_"]
+  > img {
+  width: calc(
+    var(--cheese-chat-emoji-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  height: calc(
+    var(--cheese-chat-emoji-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  margin-right: var(--cheese-chat-emoji-gap) !important;
+  transform: none !important;
+}
+
+/* 5-1. 확장프로그램이 주입한 시간 표시(.cheese-chat-time) — 자체 font-size(0.85em)가
+   스케일되지 않은 컨테이너 기준으로 계산돼 안 커진다. 메시지 텍스트(14px)의 0.85배를
+   배율에 곱해 직접 지정한다. */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_chatting_message_"]
+  .cheese-chat-time {
+  font-size: calc(
+    14px * 0.85 * var(--cheese-chat-font-scale)
+  ) !important;
+  line-height: calc(
+    14px * var(--cheese-chat-font-scale) * 1.4
+  ) !important;
+}
+
+/* 6. 배지 아이콘 컨테이너(_icon_o04z9_) */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_wrapper_o04z9_"]  > [class*="_icon_o04z9_"] {
+  width: calc(
+    var(--cheese-chat-badge-icon-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  height: calc(
+    var(--cheese-chat-badge-icon-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  min-width: calc(
+    var(--cheese-chat-badge-icon-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  flex: 0 0
+    calc(
+      var(--cheese-chat-badge-icon-size) *
+        var(--cheese-chat-font-scale)
+    ) !important;
+  transform: none !important;
+}
+
+/* 7. 배지 아이콘 내부 img/svg/container 채우기 */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_wrapper_o04z9_"]  > [class*="_icon_o04z9_"]
+  :is([class*="_container_"], img, svg) {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  transform: none !important;
+}
+
+/* 8. 닉네임 마크(_icon_dtc6c_) */
+html.cheese-chat-font-scale-ready.cheese-chat-font-scale-ready
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_icon_dtc6c_"] {
+  width: calc(
+    var(--cheese-chat-nickname-mark-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  height: calc(
+    var(--cheese-chat-nickname-mark-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  min-width: calc(
+    var(--cheese-chat-nickname-mark-size) *
+      var(--cheese-chat-font-scale)
+  ) !important;
+  flex: 0 0
+    calc(
+      var(--cheese-chat-nickname-mark-size) *
+        var(--cheese-chat-font-scale)
+    ) !important;
+  margin-left: calc(4px * var(--cheese-chat-font-scale)) !important;
+  margin-top: calc(2px * var(--cheese-chat-font-scale)) !important;
+  transform: none !important;
+}
+
+/* 9. 닉네임 말줄임 처리 */
+html.cheese-chat-font-scale-ready.cheese-chat-font-scale-ready
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_nickname_o04z9_"] {
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+
+html.cheese-chat-font-scale-ready.cheese-chat-font-scale-ready
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  :is([class*="_ellipsis_dtc6c_"], [class*="_ellipsis2_dtc6c_"]) {
+  display: inline-flex !important;
+  align-items: center !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  vertical-align: top !important;
+}
+
+html.cheese-chat-font-scale-ready.cheese-chat-font-scale-ready
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  :is([class*="_ellipsis_dtc6c_"], [class*="_ellipsis2_dtc6c_"])
+  > [class*="_text_dtc6c_"] {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+/* 10. flex min-width:0 전파(닉네임 잘림 방지) */
+html.cheese-chat-font-scale-ready.cheese-chat-font-scale-ready
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  :is([class*="_container_o04z9_"], [class*="_wrapper_o04z9_"]) {
+  min-width: 0 !important;
+}
+
+/* 11. 닉네임 행 정렬/gap */
+html.cheese-chat-font-scale-enabled.cheese-chat-font-scale-enabled
+  :is(aside#aside-chatting, aside#vod-aside)
+  :is(
+    :is(
+        [class*="_item_"],
+        [class*="live_chatting_list_item"],
+        [class*="vod_chatting_item"]
+      ),
+    [class*="_floating_"]
+  )
+  [class*="_wrapper_o04z9_"] {
+  align-items: center !important;
+  gap: calc(5px * var(--cheese-chat-font-scale)) !important;
+}
