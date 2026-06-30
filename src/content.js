@@ -4297,6 +4297,8 @@ function attachLogPowerObserverTo(area) {
   logPowerBadgeObserver = new MutationObserver((mutations) => {
     // 배지 자체 변이만이면 무시(우리 append 핑퐁 방지).
     if (mutations.length && mutations.every(isLogPowerBadgeMutation)) return;
+    // 1시간 보상 팝업이 떴는지 확인 → 자동 수령 + 팝업 치움(con-chzzk 동일).
+    handleLogPowerRewardPopup();
     debouncedLogPowerReattach();
   });
   logPowerBadgeObserver.observe(area, { childList: true, subtree: true });
@@ -4451,6 +4453,61 @@ async function putLogPowerClaim(channelId, claimId) {
   } catch {
     return false;
   }
+}
+
+// 1시간 시청 보상(통나무 파워 배달) 팝업의 "받기" 버튼을 찾는다(con-chzzk findPowerButton
+// 이식). 클래스명이 난독화되므로 텍스트/아이콘 구조로 식별하고, 구버전 클래스는 폴백.
+function findLogPowerRewardButton(root) {
+  const scope =
+    root || document.querySelector("aside#aside-chatting") || document;
+  // 1) 구버전 클래스 폴백.
+  const legacy =
+    scope.querySelector("[class*='live_chatting_power_button__']") ||
+    scope.querySelector("[class*='_power_button_']");
+  if (legacy) return legacy;
+  // 2) 신버전: 보상 문구를 가진 버튼을 텍스트/아이콘으로 탐색.
+  for (const btn of scope.querySelectorAll("button")) {
+    const t = (btn.textContent || "").trim();
+    const hasRewardText =
+      (t.includes("받기") && (t.includes("통나무 파워") || t.includes("배달"))) ||
+      t.includes("배달 완료");
+    const hasPowerIcon = !!btn.querySelector("[class*='_icon_power_']");
+    if (hasRewardText || (t.includes("받기") && hasPowerIcon)) return btn;
+  }
+  return null;
+}
+
+// 보상 팝업이 떠 있으면 자동 수령(API)하고 팝업을 치운다. con-chzzk와 동일하게,
+// 사용자가 직접 '받기'를 누르지 않아도 처리되도록 한다(우리 너비 리사이저가 팝업
+// 가장자리 클릭을 가로채 '클릭이 안 되는 느낌'이 나던 문제 해소). 자동 획득 토글이
+// 켜졌을 때만 동작한다(꺼져 있으면 사용자가 직접 받도록 둠 — 단 아래 리사이저
+// pointer-events 회피로 직접 클릭도 가능하게 한다).
+let logPowerRewardHandledAt = 0;
+function handleLogPowerRewardPopup() {
+  if (!getCurrentLiveChannelId()) return;
+  const btn = findLogPowerRewardButton();
+  // 보상 팝업이 떠 있는 동안에는 너비 리사이저가 그 클릭을 가로채지 않도록
+  // pointer-events를 잠시 끈다(자동 획득 on/off 무관 — 사용자가 직접 받을 수도 있음).
+  setChatResizerClickThrough(!!btn);
+  if (!btn) return;
+  // 자동 획득이 켜졌을 때만 API 수령 + 팝업 치움(꺼져 있으면 사용자가 직접 받도록 둠).
+  if (!featureFlags.chatLogPower || !featureFlags.chatLogPowerAuto) return;
+  const now = Date.now();
+  if (now - logPowerRewardHandledAt < 5000) return; // 과열 방지(5초 쿨다운)
+  logPowerRewardHandledAt = now;
+  void claimLogPowerForCurrentChannel();
+  try {
+    const container = btn.parentElement || btn;
+    container.style.display = "none";
+  } catch {}
+}
+
+// 보상 팝업이 떠 있는 동안 채팅 너비 리사이저의 클릭 가로채기를 끈다(<html> 클래스).
+function setChatResizerClickThrough(on) {
+  document.documentElement.classList.toggle(
+    "cheese-chat-reward-popup-open",
+    !!on,
+  );
 }
 
 async function claimLogPowerForCurrentChannel() {
@@ -8258,6 +8315,12 @@ function updateChatTweakStyle() {
       position: absolute; top: 0; bottom: 0; left: 0;
       width: 8px; z-index: 2147482500;
       cursor: col-resize; pointer-events: auto; touch-action: none;
+    }
+    /* 1시간 보상 팝업이 떠 있는 동안엔 리사이저가 팝업 가장자리 클릭을 가로채지
+       않도록 클릭을 통과시킨다(con-chzzk엔 없는 리사이저 때문에 생기던 문제). */
+    html.cheese-chat-reward-popup-open aside#aside-chatting .${CHAT_RESIZER_CLASS},
+    html.cheese-chat-reward-popup-open aside#vod-aside .${CHAT_RESIZER_CLASS} {
+      pointer-events: none;
     }
     html.cheese-chat-left-position aside#aside-chatting .${CHAT_RESIZER_CLASS},
     html.cheese-chat-left-position aside#vod-aside .${CHAT_RESIZER_CLASS} {
