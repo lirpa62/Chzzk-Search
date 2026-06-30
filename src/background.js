@@ -47,15 +47,10 @@ const persistentStorage =
   chrome.storage && chrome.storage.local ? chrome.storage.local : null;
 
 if (chrome.webRequest?.onCompleted) {
-  chrome.webRequest.onCompleted.addListener(
-    handleMakeClipDeleteCompleted,
-    {
-      urls: [
-        `${MANAGE_API_BASE}/channels/*/clips/*`,
-      ],
-      types: ["xmlhttprequest"],
-    },
-  );
+  chrome.webRequest.onCompleted.addListener(handleMakeClipDeleteCompleted, {
+    urls: [`${MANAGE_API_BASE}/channels/*/clips/*`],
+    types: ["xmlhttprequest"],
+  });
 }
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -63,10 +58,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   try {
     const tabs = await chrome.tabs.query({
-      url: [
-        "https://chzzk.naver.com/*",
-        "https://studio.chzzk.naver.com/*",
-      ],
+      url: ["https://chzzk.naver.com/*", "https://studio.chzzk.naver.com/*"],
     });
     const version = chrome.runtime.getManifest().version;
 
@@ -664,7 +656,10 @@ async function fetchMakeClipPage({
   url.searchParams.set("page", String(page));
   url.searchParams.set("size", String(MAKE_CLIP_PAGE_SIZE));
   url.searchParams.set("dateFilter", normalizeMakeClipDateFilter(dateFilter));
-  url.searchParams.set("orderFilter", normalizeMakeClipOrderFilter(orderFilter));
+  url.searchParams.set(
+    "orderFilter",
+    normalizeMakeClipOrderFilter(orderFilter),
+  );
 
   const response = await fetch(url.toString(), {
     method: "GET",
@@ -676,7 +671,9 @@ async function fetchMakeClipPage({
   });
 
   if (!response.ok) {
-    throw new Error(`CHZZK 내가 만든 클립 API 요청 실패: HTTP ${response.status}`);
+    throw new Error(
+      `CHZZK 내가 만든 클립 API 요청 실패: HTTP ${response.status}`,
+    );
   }
 
   const payload = await response.json();
@@ -713,7 +710,9 @@ async function deleteMakeClip({ channelId, clipUID }) {
   if (text) {
     const payload = JSON.parse(text);
     if (Number(payload?.code) !== 200) {
-      throw new Error(payload?.message || "CHZZK 클립 삭제 응답을 읽을 수 없습니다.");
+      throw new Error(
+        payload?.message || "CHZZK 클립 삭제 응답을 읽을 수 없습니다.",
+      );
     }
   }
 
@@ -1137,7 +1136,10 @@ function applyLikePipelineResults(clips, enrichedByUID) {
 function handleMakeClipDeleteCompleted(details) {
   if (details.method !== "DELETE") return;
   if (!Number.isInteger(details.tabId) || details.tabId < 0) return;
-  if (Number(details.statusCode || 0) < 200 || Number(details.statusCode || 0) >= 300) {
+  if (
+    Number(details.statusCode || 0) < 200 ||
+    Number(details.statusCode || 0) >= 300
+  ) {
     return;
   }
 
@@ -1221,8 +1223,7 @@ function extractClipLikeCount(payload) {
     const reactions = value.reactions;
     if (Array.isArray(reactions)) {
       const likeReaction =
-        reactions.find((item) => item?.reactionType === "like") ??
-        reactions[0];
+        reactions.find((item) => item?.reactionType === "like") ?? reactions[0];
       const reactionsCount = Number(
         likeReaction?.count ?? likeReaction?.reactionCount,
       );
@@ -1484,24 +1485,21 @@ function trimTimestampSegmentDescription(
   if (closing && description.trimEnd().endsWith(closing)) {
     description = description.trimEnd().slice(0, -closing.length);
   }
-  return description.replace(
-    /[\s\-–—_:|/.,~·▶▷([{<〈《「『【（［｛]+$/u,
-    "",
-  );
+  return description.replace(/[\s\-–—_:|/.,~·▶▷([{<〈《「『【（［｛]+$/u, "");
 }
 
 function normalizeTimestampDescription(description) {
   const text = String(description || "")
-    .replace(/^[\s\-–—_:|/.,~·▶▷\])}>\u3009\u300b\u300d\u300f\u3011\uff09\uff3d\uff5d]+/u, "")
+    .replace(
+      /^[\s\-–—_:|/.,~·▶▷\])}>\u3009\u300b\u300d\u300f\u3011\uff09\uff3d\uff5d]+/u,
+      "",
+    )
     .replace(/\s+/g, " ")
     .trim();
   if (!text) return "";
   const withoutTimestamps = text
     .replace(/(?:\d{1,2}:)?\d{1,2}:\d{2}/g, "")
-    .replace(
-      /[\s\-–—_:|/.,~·()[\]{}<>〈〉《》「」『』【】（）［］｛｝]+/g,
-      "",
-    )
+    .replace(/[\s\-–—_:|/.,~·()[\]{}<>〈〉《》「」『』【】（）［］｛｝]+/g, "")
     .trim();
   return withoutTimestamps ? text : "";
 }
@@ -2607,12 +2605,12 @@ async function fetchLiveStatusByChannelId(channelId) {
 
 // ══ 통나무파워 시청 적립 추적(background, con-chzzk 이식) ══════════════════════
 // content의 setInterval은 탭이 백그라운드(document.hidden)면 5분 체크가 멈추고 SPA
-// 이동 시 상태가 휘발한다. chrome.alarms로 background에서 5분마다 보유량 delta를
+// 이동 시 상태가 휘발한다. chrome.alarms로 background에서 1분마다 보유량 delta를
 // 비교해 '적립 중'을 판정하고, storage.session에 채널별 상태를 저장한다. 표시(배지
 // progress 토글)는 content가 broadcast(LOG_POWER_WATCH_REWARD_STATUS)를 받아 한다.
 const LP_WATCH_STATE_PREFIX = "logpower_watch_reward_state:";
 const LP_WATCH_ALARM_PREFIX = "logpower:watch-reward:";
-const LP_WATCH_INTERVAL_MIN = 5;
+const LP_WATCH_INTERVAL_MIN = 1;
 const LP_WATCH_ACTIVE_TTL_MS = 6 * 60 * 1000; // 적립 활성 6분
 const LP_WATCH_MAX_MS = 75 * 60 * 1000; // 최대 추적 75분
 const LP_WATCH_AMOUNTS = [10, 12, 20]; // tier0/1/2 시청 보상액
@@ -2699,10 +2697,9 @@ async function lpFetchAmount(channelId) {
 
 async function lpIsChannelLive(channelId) {
   try {
-    const res = await fetch(
-      `${LP_CHANNELS_PREFIX}/${channelId}/live-status`,
-      { credentials: "include" },
-    );
+    const res = await fetch(`${LP_CHANNELS_PREFIX}/${channelId}/live-status`, {
+      credentials: "include",
+    });
     if (!res.ok) return null; // 불확실
     const json = await res.json();
     const c = json?.content;
@@ -2747,10 +2744,7 @@ async function lpStartTracking({ channelId, initialAmount }) {
   if (!channelId) return null;
   const now = Date.now();
   const existing = await lpGetWatchState(channelId);
-  if (
-    existing &&
-    now - Number(existing.startedAt || 0) <= LP_WATCH_MAX_MS
-  ) {
+  if (existing && now - Number(existing.startedAt || 0) <= LP_WATCH_MAX_MS) {
     // 추적 유지(알람만 보장).
     chrome.alarms.create(lpWatchAlarmName(channelId), {
       delayInMinutes: LP_WATCH_INTERVAL_MIN,

@@ -412,7 +412,7 @@
   });
   loadFollowPreviewThumb();
 
-  // ── 미리보기 헤더 폰트 크기(입력 80~200%, 저장 배율 0.8~2.0) ────────────────
+  // ── 미리보기 헤더 폰트 크기(입력 75~175%, 저장 배율 0.75~1.75) ──────────────
   const FOLLOW_PREVIEW_HEADER_FONT_KEY = "cheeseFollowPreviewHeaderFont";
   const followHeaderFontInput = document.querySelector(
     "[data-follow-header-font]",
@@ -420,7 +420,7 @@
   function clampHeaderFontPct(v) {
     const n = Number(v);
     if (!Number.isFinite(n)) return 100;
-    return Math.min(200, Math.max(80, Math.round(n / 5) * 5));
+    return Math.min(175, Math.max(75, Math.round(n / 5) * 5));
   }
   if (followHeaderFontInput) {
     (async () => {

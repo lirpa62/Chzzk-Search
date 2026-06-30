@@ -104,10 +104,10 @@ const FOLLOW_PREVIEW_MAXLIFE_ALLOWED = [30, 60, 120, 180, 300];
 // 미리보기 소리: true=항상 음소거(기본), false=항상 소리 켬. controls로 켜도
 // 다음 미리보기에선 이 값으로 강제해 일관성 유지.
 const FOLLOW_PREVIEW_MUTED_KEY = "cheeseFollowPreviewMuted";
-// 미리보기 헤더(메타바) 폰트 배율(0.8~2.0, 기본 1). 헤더 전체가 함께 스케일.
+// 미리보기 헤더(메타바) 폰트 배율(0.75~1.75, 기본 1). 헤더 전체가 함께 스케일.
 const FOLLOW_PREVIEW_HEADER_FONT_KEY = "cheeseFollowPreviewHeaderFont";
-const FOLLOW_PREVIEW_HEADER_FONT_MIN = 0.8;
-const FOLLOW_PREVIEW_HEADER_FONT_MAX = 2;
+const FOLLOW_PREVIEW_HEADER_FONT_MIN = 0.75;
+const FOLLOW_PREVIEW_HEADER_FONT_MAX = 1.75;
 const FOLLOW_PREVIEW_HEADER_FONT_DEFAULT = 1;
 // 미리보기를 영상 대신 썸네일 이미지로만 표시(true=썸네일, 기본 false=영상).
 const FOLLOW_PREVIEW_THUMB_KEY = "cheeseFollowPreviewThumbOnly";
@@ -131,6 +131,7 @@ const featureFlags = {
   chatHidePrediction: false,
   chatWidthResize: false,
   chatLeftPosition: false,
+  chatAutoHide: false,
   chatShowTime: false, // 채팅 메시지에 HH:MM 시간 표시(MAIN world chatTimestamp.js)
   chatRestoreBlind: false, // 가려진(클린봇/블라인드) 채팅 원문 복원(chatTimestamp.js)
   chatLogPower: false, // 현재 채널 보유 통나무파워를 채팅 영역에 표시
@@ -7287,6 +7288,8 @@ const CHAT_ASIDE_SEL = "aside#aside-chatting, aside#vod-aside";
 const CHAT_MIN_WIDTH = 220;
 const CHAT_WIDTH_KEY = "cheeseChatWidth";
 const CHAT_RESIZER_CLASS = "cheese-chat-width-resizer";
+const CHAT_PEEK_CLASS = "cheese-chat-peek";
+const CHAT_PEEK_ZONE_PX = 8;
 // 채팅 폰트 크기 배율(배지 모아 챗과 동일: 0.8~2, 기본 1). settings 셀렉트로 조절.
 const CHAT_FONT_SCALE_KEY = "cheeseChatFontScale";
 const CHAT_FONT_SCALE_MIN = 0.8;
@@ -7301,6 +7304,9 @@ const CHAT_HIDE_CLASSES = {
 };
 let chatObserver = null;
 let chatWidthValue = 0; // 0이면 미설정(기본 너비)
+let chatAutoHideBound = false;
+let chatPeekPinned = false;
+let chatPeekShown = false;
 
 // badge-moa-chat이 '특정 채팅 기능'을 제어 중인지 개별 판정한다. moa가 그 기능을
 // 켰을 때만 해당 항목을 양보한다(글자 크기 등 무관한 moa 기능까지 양보하지 않음).
@@ -7379,6 +7385,7 @@ function anyChatTweakOn() {
     featureFlags.chatHidePrediction ||
     featureFlags.chatWidthResize ||
     featureFlags.chatLeftPosition ||
+    featureFlags.chatAutoHide ||
     Math.abs(normalizeChatFontScale(chatFontScaleValue) - 1) > 0.001
   );
 }
@@ -8033,6 +8040,115 @@ function applyChatLeftClass() {
   document.documentElement.classList.toggle("cheese-chat-left-position", on);
 }
 
+function applyChatAutoHideClass() {
+  const root = document.documentElement;
+  const aside = findResizableChatAside();
+  const on =
+    featureFlags.chatAutoHide &&
+    !!aside &&
+    !isChatStackedLayout(aside) &&
+    !isStandaloneChatPopup();
+  const wasOn = root.classList.contains("cheese-chat-auto-hide");
+  let layoutChanged = wasOn !== on;
+  if (on) {
+    const width = Math.max(
+      CHAT_MIN_WIDTH,
+      Math.round(aside.getBoundingClientRect().width || 0),
+    );
+    const value = `${width}px`;
+    layoutChanged =
+      layoutChanged ||
+      root.style.getPropertyValue("--cheese-chat-auto-hide-width") !== value;
+    root.style.setProperty("--cheese-chat-auto-hide-width", value);
+  } else {
+    if (root.style.getPropertyValue("--cheese-chat-auto-hide-width")) {
+      layoutChanged = true;
+      root.style.removeProperty("--cheese-chat-auto-hide-width");
+    }
+  }
+  root.classList.toggle("cheese-chat-auto-hide", on);
+  if (on) {
+    bindChatAutoHideArea(aside);
+    bindChatAutoHide();
+  } else {
+    unbindChatAutoHide();
+  }
+  if (layoutChanged) requestAnimationFrame(() => applyFillScreen());
+}
+
+function setChatPeek(show) {
+  show = Boolean(show);
+  if (show === chatPeekShown) return;
+  chatPeekShown = show;
+  document.documentElement.classList.toggle(CHAT_PEEK_CLASS, show);
+}
+
+function getChatPeekEdge() {
+  return document.documentElement.classList.contains("cheese-chat-left-position")
+    ? "left"
+    : "right";
+}
+
+function onChatAutoHideMouseMove(e) {
+  if (!document.documentElement.classList.contains("cheese-chat-auto-hide")) {
+    setChatPeek(false);
+    return;
+  }
+  if (chatPeekPinned) return;
+  const edge = getChatPeekEdge();
+  const nearEdge =
+    edge === "left"
+      ? e.clientX <= CHAT_PEEK_ZONE_PX
+      : window.innerWidth - e.clientX <= CHAT_PEEK_ZONE_PX;
+  if (nearEdge) setChatPeek(true);
+}
+
+function onChatAutoHideDocumentMouseOut(e) {
+  if (e.relatedTarget === null && !chatPeekPinned) setChatPeek(false);
+}
+
+function onChatAreaEnter() {
+  chatPeekPinned = true;
+  setChatPeek(true);
+}
+
+function onChatAreaLeave() {
+  chatPeekPinned = false;
+  setChatPeek(false);
+}
+
+function bindChatAutoHide() {
+  if (chatAutoHideBound) return;
+  document.addEventListener("mousemove", onChatAutoHideMouseMove, {
+    passive: true,
+  });
+  document.addEventListener("mouseout", onChatAutoHideDocumentMouseOut, {
+    passive: true,
+  });
+  chatAutoHideBound = true;
+}
+
+function unbindChatAutoHide() {
+  if (chatAutoHideBound) {
+    document.removeEventListener("mousemove", onChatAutoHideMouseMove);
+    document.removeEventListener("mouseout", onChatAutoHideDocumentMouseOut);
+    chatAutoHideBound = false;
+  }
+  chatPeekPinned = false;
+  setChatPeek(false);
+}
+
+function bindChatAutoHideArea(aside) {
+  if (!(aside instanceof HTMLElement) || aside.dataset.cheeseChatAutoHideBound) {
+    return;
+  }
+  aside.dataset.cheeseChatAutoHideBound = "1";
+  aside.addEventListener("mouseenter", onChatAreaEnter);
+  aside.addEventListener("mouseleave", onChatAreaLeave);
+  aside.addEventListener("focusin", onChatAreaEnter);
+  aside.addEventListener("focusout", onChatAreaLeave);
+}
+
 // 채팅 정리 전체 적용(양보 판단 포함). settings/onChanged/옵저버에서 호출.
 function applyChatTweaks() {
   reportChatMoaState(); // moa 제어 상태를 settings에 알림(토글 비활성화용)
@@ -8044,6 +8160,11 @@ function applyChatTweaks() {
       .querySelectorAll(CHAT_ASIDE_SEL)
       .forEach((aside) => resetChatAsideWidth(aside));
     document.documentElement.classList.remove("cheese-chat-left-position");
+    document.documentElement.classList.remove("cheese-chat-auto-hide");
+    document.documentElement.style.removeProperty(
+      "--cheese-chat-auto-hide-width",
+    );
+    unbindChatAutoHide();
     document.documentElement.classList.remove(
       "cheese-chat-width-resize-enabled",
     );
@@ -8059,6 +8180,7 @@ function applyChatTweaks() {
   applyChatHideMarkers();
   applyChatLayout();
   applyChatLeftClass();
+  applyChatAutoHideClass();
   applyChatFontScale();
   startChatObserver(); // moa on/off·새 채팅 DOM 변화를 계속 추적
 }
@@ -8077,6 +8199,28 @@ function updateChatTweakStyle() {
     .${CHAT_HIDE_CLASSES.chatHidePrediction} { display: none !important; }
     html.cheese-chat-left-position aside#aside-chatting,
     html.cheese-chat-left-position aside#vod-aside { order: -1 !important; }
+    html.cheese-chat-auto-hide:not(.cheese-chat-stacked):not(.cheese-chat-popup) aside#aside-chatting,
+    html.cheese-chat-auto-hide:not(.cheese-chat-stacked):not(.cheese-chat-popup) aside#vod-aside {
+      position: relative !important;
+      margin-left: calc(var(--cheese-chat-auto-hide-width, var(--cheese-chat-resized-width, 353px)) * -1) !important;
+      margin-right: 0 !important;
+      transform: translateX(100%) !important;
+      transition: transform 0.22s ease !important;
+      will-change: transform;
+      z-index: 30;
+    }
+    html.cheese-chat-auto-hide.cheese-chat-left-position:not(.cheese-chat-stacked):not(.cheese-chat-popup) aside#aside-chatting,
+    html.cheese-chat-auto-hide.cheese-chat-left-position:not(.cheese-chat-stacked):not(.cheese-chat-popup) aside#vod-aside {
+      margin-left: 0 !important;
+      margin-right: calc(var(--cheese-chat-auto-hide-width, var(--cheese-chat-resized-width, 353px)) * -1) !important;
+      transform: translateX(-100%) !important;
+    }
+    html.cheese-chat-auto-hide.${CHAT_PEEK_CLASS}:not(.cheese-chat-stacked):not(.cheese-chat-popup) aside#aside-chatting,
+    html.cheese-chat-auto-hide.${CHAT_PEEK_CLASS}:not(.cheese-chat-stacked):not(.cheese-chat-popup) aside#vod-aside,
+    html.cheese-chat-auto-hide.cheese-chat-resizing aside#aside-chatting,
+    html.cheese-chat-auto-hide.cheese-chat-resizing aside#vod-aside {
+      transform: translateX(0) !important;
+    }
     /* 다시보기: 채팅이 왼쪽 배치되면 그 아래 영상정보(_details_/_container_1nl77_)가
        채팅 너비만큼 왼쪽이 비어 어긋난다. 채팅 너비(--cheese-chat-resized-width, 미조절
        시 기본 353px)만큼 margin-left를 줘 정렬을 맞춘다. 채팅이 없으면 이 규칙은
@@ -8238,6 +8382,7 @@ function applyChatTweaksLight() {
   applyChatHideMarkers();
   applyChatLayout(); // 양보/세로배치/원복 판단을 자체 처리
   applyChatLeftClass();
+  applyChatAutoHideClass();
   applyChatFontScale();
 }
 

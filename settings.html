@@ -950,15 +950,15 @@
                 <label for="followHeaderFontInput">
                   <span class="settings-item-name">헤더 폰트 크기</span>
                   <span class="settings-item-desc"
-                    >미리보기 상단 정보(제목·채널·시청자) 글자 크기(80~200%)</span
+                    >미리보기 상단 정보(제목·채널·시청자) 글자 크기(75~175%)</span
                   >
                 </label>
                 <span class="settings-custom-input">
                   <input
                     type="number"
                     id="followHeaderFontInput"
-                    min="80"
-                    max="200"
+                    min="75"
+                    max="175"
                     step="5"
                     inputmode="numeric"
                     data-follow-header-font
@@ -1082,6 +1082,18 @@
                 </label>
                 <label class="settings-switch">
                   <input type="checkbox" data-feature="chatLeftPosition" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">채팅창 자동 숨김</span>
+                  <span class="settings-item-desc"
+                    >마우스를 채팅창 가장자리 근처에 올리면 슬라이드 표시(체크=사용)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="chatAutoHide" />
                   <i aria-hidden="true"></i>
                 </label>
               </li>

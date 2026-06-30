@@ -2886,8 +2886,8 @@
 
 #cheese-follow-preview .cheese-follow-preview-meta-verified {
   flex: none;
-  width: 15px;
-  height: 15px;
+  width: calc(15px * var(--cheese-fp-header-font, 1));
+  height: calc(15px * var(--cheese-fp-header-font, 1));
   background: url("https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png")
     50% / cover no-repeat;
 }
