@@ -2685,6 +2685,9 @@
   align-items: center;
   gap: 5px;
   padding: 6px 12px;
+  height: 35px;
+  margin-top: auto;
+  margin-bottom: auto;
   border-radius: 999px;
   font-size: 14px;
   font-weight: 700;
@@ -2854,7 +2857,8 @@
 
 #cheese-follow-preview .cheese-follow-preview-meta-title {
   display: block;
-  font-size: 15px;
+  /* 헤더 폰트 배율(settings, 기본 1)을 곱해 헤더 전체가 함께 스케일 */
+  font-size: calc(15px * var(--cheese-fp-header-font, 1));
   font-weight: 800;
   color: #fff;
   white-space: nowrap;
@@ -2872,7 +2876,7 @@
 #cheese-follow-preview .cheese-follow-preview-meta-name {
   flex: none;
   max-width: 50%;
-  font-size: 13px;
+  font-size: calc(13px * var(--cheese-fp-header-font, 1));
   font-weight: 700;
   color: rgba(255, 255, 255, 0.92);
   white-space: nowrap;
@@ -2895,7 +2899,7 @@
   padding: 2px 9px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 999px;
-  font-size: 12px;
+  font-size: calc(12px * var(--cheese-fp-header-font, 1));
   font-weight: 600;
   color: rgba(255, 255, 255, 0.88);
   white-space: nowrap;
@@ -2919,14 +2923,14 @@
 }
 
 #cheese-follow-preview .cheese-follow-preview-meta-viewers {
-  font-size: 13px;
+  font-size: calc(13px * var(--cheese-fp-header-font, 1));
   font-weight: 800;
   font-style: normal;
   color: #ff5454;
 }
 
 #cheese-follow-preview .cheese-follow-preview-meta-elapsed {
-  font-size: 13px;
+  font-size: calc(13px * var(--cheese-fp-header-font, 1));
   font-weight: 700;
   color: rgba(255, 255, 255, 0.92);
 }
@@ -2988,6 +2992,25 @@
 
 /* 로딩 중엔 video 가리고 3-dot 펄스 표시 */
 #cheese-follow-preview.is-loading .cheese-follow-preview-video {
+  visibility: hidden;
+}
+
+/* 썸네일 이미지(기본 숨김, 썸네일 모드에서만 표시) */
+#cheese-follow-preview .cheese-follow-preview-thumb {
+  display: none;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+/* 썸네일 모드: video는 숨기고 썸네일 이미지 표시 */
+#cheese-follow-preview.is-thumb-only .cheese-follow-preview-video {
+  display: none;
+}
+#cheese-follow-preview.is-thumb-only .cheese-follow-preview-thumb {
+  display: block;
+}
+#cheese-follow-preview.is-thumb-only.is-loading .cheese-follow-preview-thumb {
   visibility: hidden;
 }
 

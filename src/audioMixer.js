@@ -36,6 +36,14 @@
     // 읽어 전달. custom이면 syncCustom={enable,target}을 함께 받는다.
     if (typeof applySyncPreset === "function")
       applySyncPreset(e.data.syncPreset, e.data.syncCustom);
+    // 되감기 간격(1~60초). 바뀌면 이미 떠 있는 버튼 라벨/아이콘 갱신.
+    const ns = Number(e.data.seekStepS);
+    if (Number.isFinite(ns) && ns >= 1 && ns <= 60) {
+      const changed = ns !== seekStepS;
+      seekStepS = Math.round(ns);
+      if (changed && typeof refreshSeekButtonLabels === "function")
+        refreshSeekButtonLabels();
+    }
     if (typeof tick === "function") tick();
     if (typeof maybeAutoEnableMixer === "function") maybeAutoEnableMixer();
   });
@@ -75,7 +83,7 @@
   // 라이브 되감기/앞으로(seekable 윈도우 내) 관련
   const REWIND_BUTTON_CLASS = "cheese-live-rewind-button";
   const FORWARD_BUTTON_CLASS = "cheese-live-forward-button";
-  const SEEK_STEP_S = 10; // 한 번에 ±10초
+  let seekStepS = 10; // 한 번에 ±N초(settings에서 1~60 조절). content.js가 전달.
   const SEEK_EDGE_PAD_S = 2; // 라이브 엣지에 이만큼 못 미치게(엣지 직전까지만 앞으로)
 
   // 라이브 싱크 따라잡기 관련
@@ -3718,21 +3726,24 @@
   // DVR 성격(측정 확인). 그래서 seekable.start ~ (라이브 엣지-여유) 안에서 ±10초
   // 이동을 제공한다. 과거로 가면 onUserSeeked가 lastUserSeekAt을 기록해 자동
   // 따라잡기가 잠시 멈춘다(우리가 ourSeekUntil을 설정하지 않으므로 '사용자 seek'로 인식).
+  // 아이콘 안 숫자(N)는 step에 따라 1~2자리. font-size를 자릿수에 맞춰 줄인다.
   function rewindIcon() {
-    // 10초 되감기(↺ 화살표 + 10)
+    const n = seekStepS;
+    const fs = n >= 10 ? 8 : 9;
     return `<svg class="pzp-ui-icon__svg" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
       <path d="M18 11a7 7 0 1 1-6.7 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"></path>
       <path d="M18 7.5 14 11l4 3.5V7.5Z" fill="currentColor"></path>
-      <text x="18" y="21.5" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor">10</text>
+      <text x="18" y="21.5" text-anchor="middle" font-size="${fs}" font-weight="700" fill="currentColor">${n}</text>
     </svg>`;
   }
 
   function forwardIcon() {
-    // 10초 앞으로(↻ 화살표 + 10)
+    const n = seekStepS;
+    const fs = n >= 10 ? 8 : 9;
     return `<svg class="pzp-ui-icon__svg" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
       <path d="M18 11a7 7 0 1 0 6.7 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"></path>
       <path d="M18 7.5 22 11l-4 3.5V7.5Z" fill="currentColor"></path>
-      <text x="18" y="21.5" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor">10</text>
+      <text x="18" y="21.5" text-anchor="middle" font-size="${fs}" font-weight="700" fill="currentColor">${n}</text>
     </svg>`;
   }
 
@@ -3742,11 +3753,25 @@
     btn.className = `${cls} pzp-pc__setting-button pzp-button pzp-pc-ui-button`;
     btn.type = "button";
     btn.disabled = true;
-    const label = forward ? "10초 앞으로" : "10초 되감기";
-    const tip = forward ? "10초 앞으로 (→)" : "10초 되감기 (←)";
+    const label = forward ? `${seekStepS}초 앞으로` : `${seekStepS}초 되감기`;
+    const tip = forward ? `${seekStepS}초 앞으로 (→)` : `${seekStepS}초 되감기 (←)`;
     btn.setAttribute("aria-label", label);
     btn.innerHTML = `<span class="pzp-button__tooltip pzp-button__tooltip--top">${tip}</span><span class="pzp-ui-icon">${forward ? forwardIcon() : rewindIcon()}</span>`;
     return btn;
+  }
+
+  // step 변경 시 이미 떠 있는 버튼의 아이콘/라벨을 갱신(재생성 없이).
+  function refreshSeekButtonLabels() {
+    const rew = document.querySelector(`.${REWIND_BUTTON_CLASS}`);
+    const fwd = document.querySelector(`.${FORWARD_BUTTON_CLASS}`);
+    if (rew) {
+      rew.setAttribute("aria-label", `${seekStepS}초 되감기`);
+      rew.innerHTML = `<span class="pzp-button__tooltip pzp-button__tooltip--top">${seekStepS}초 되감기 (←)</span><span class="pzp-ui-icon">${rewindIcon()}</span>`;
+    }
+    if (fwd) {
+      fwd.setAttribute("aria-label", `${seekStepS}초 앞으로`);
+      fwd.innerHTML = `<span class="pzp-button__tooltip pzp-button__tooltip--top">${seekStepS}초 앞으로 (→)</span><span class="pzp-ui-icon">${forwardIcon()}</span>`;
+    }
   }
 
   // 현재 video의 되감기/앞으로 가능 여부를 반환. {video, start, end, cur}
@@ -3764,7 +3789,7 @@
   function seekBy(forward) {
     const w = getSeekWindow();
     if (!w) return;
-    const step = forward ? SEEK_STEP_S : -SEEK_STEP_S;
+    const step = forward ? seekStepS : -seekStepS;
     // 앞으로는 라이브 엣지 직전(여유 2초)까지만. 되감기는 윈도우 시작까지.
     const maxFwd = Math.max(w.start, w.end - SEEK_EDGE_PAD_S);
     let target = w.cur + step;

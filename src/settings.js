@@ -99,102 +99,33 @@
 
   // ── 채팅 폰트 크기: 커스텀 팝오버 드롭다운(0.8~2, 기본 1) ──────────────────
   const CHAT_FONT_SCALE_KEY = "cheeseChatFontScale";
-  const chatFontScalePopover = document.querySelector("[data-chat-font-scale]");
-  if (chatFontScalePopover) {
-    const trigger = chatFontScalePopover.querySelector(
-      ".settings-popover-trigger",
-    );
-    const list = chatFontScalePopover.querySelector(".settings-popover-list");
-    const valueLabel = chatFontScalePopover.querySelector(
-      ".settings-popover-value",
-    );
-    const options = Array.from(list.querySelectorAll("[role='option']"));
-
-    function setChatFontValue(value, persist) {
-      const opt =
-        options.find((o) => o.dataset.value === String(value)) ||
-        options.find((o) => o.dataset.value === "1");
-      options.forEach((o) =>
-        o.setAttribute("aria-selected", String(o === opt)),
-      );
-      valueLabel.textContent = opt.textContent;
-      if (persist) {
-        const v = Number(opt.dataset.value);
-        try {
-          chrome.storage?.local?.set({
-            [CHAT_FONT_SCALE_KEY]: Number.isFinite(v) ? v : 1,
-          });
-        } catch {}
-      }
-    }
-    // 리스트는 position:fixed로 띄워 패널 스크롤 컨테이너(overflow:auto)에 잘리지
-    // 않게 한다. 트리거 화면 좌표 기준으로 아래에 두되, 아래 공간이 부족하면 위로.
-    function positionChatFontList() {
-      const r = trigger.getBoundingClientRect();
-      list.style.minWidth = `${r.width}px`;
-      list.style.left = "auto";
-      list.style.right = `${window.innerWidth - r.right}px`;
-      // 먼저 아래로 가정해 높이를 잰 뒤 공간 판단.
-      const margin = 6;
-      const listH = list.offsetHeight;
-      const below = window.innerHeight - r.bottom;
-      if (below < listH + margin && r.top > below) {
-        // 위로 펼침.
-        list.style.top = "auto";
-        list.style.bottom = `${window.innerHeight - r.top + 4}px`;
-        list.style.maxHeight = `${Math.max(120, r.top - margin)}px`;
-      } else {
-        list.style.bottom = "auto";
-        list.style.top = `${r.bottom + 4}px`;
-        list.style.maxHeight = `${Math.max(120, below - margin)}px`;
-      }
-    }
-    function openChatFontList(open) {
-      list.hidden = !open;
-      trigger.setAttribute("aria-expanded", String(open));
-      chatFontScalePopover.classList.toggle("is-open", open);
-      if (open) positionChatFontList();
-    }
-    // 스크롤/리사이즈 중 열려 있으면 위치 갱신(또는 닫기).
-    window.addEventListener(
-      "scroll",
-      () => {
-        if (!list.hidden) positionChatFontList();
-      },
-      true,
-    );
-    window.addEventListener("resize", () => {
-      if (!list.hidden) positionChatFontList();
-    });
-
+  // 입력은 퍼센트(80~200), 저장값은 배율(0.8~2.0).
+  const chatFontScaleInput = document.querySelector("[data-chat-font-scale]");
+  function clampChatFontPct(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 100;
+    return Math.min(200, Math.max(80, Math.round(n / 5) * 5));
+  }
+  if (chatFontScaleInput) {
     (async () => {
       try {
         const d = await chrome.storage?.local?.get(CHAT_FONT_SCALE_KEY);
-        const v = Number(d?.[CHAT_FONT_SCALE_KEY]);
-        setChatFontValue(Number.isFinite(v) && v > 0 ? v : 1, false);
+        const scale = Number(d?.[CHAT_FONT_SCALE_KEY]);
+        const pct = Number.isFinite(scale) && scale > 0 ? scale * 100 : 100;
+        chatFontScaleInput.value = String(clampChatFontPct(pct));
       } catch {
-        setChatFontValue(1, false);
+        chatFontScaleInput.value = "100";
       }
     })();
-
-    trigger.addEventListener("click", (e) => {
-      if (trigger.disabled) return;
-      e.stopPropagation();
-      openChatFontList(list.hidden);
-    });
-    list.addEventListener("click", (e) => {
-      const opt = e.target.closest("[role='option']");
-      if (!opt) return;
-      setChatFontValue(opt.dataset.value, true);
-      openChatFontList(false);
-    });
-    // 바깥 클릭/ESC로 닫기.
-    document.addEventListener("click", (e) => {
-      if (!chatFontScalePopover.contains(e.target)) openChatFontList(false);
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") openChatFontList(false);
-    });
+    const saveChatFontScale = () => {
+      const pct = clampChatFontPct(chatFontScaleInput.value);
+      chatFontScaleInput.value = String(pct);
+      try {
+        chrome.storage?.local?.set({ [CHAT_FONT_SCALE_KEY]: pct / 100 });
+      } catch {}
+    };
+    chatFontScaleInput.addEventListener("change", saveChatFontScale);
+    chatFontScaleInput.addEventListener("blur", saveChatFontScale);
   }
 
   // ── 채팅 기능: 배지 모아 챗이 제어 중이면 해당 토글/셀렉트를 비활성화 ─────────
@@ -216,18 +147,15 @@
         item?.removeAttribute("title");
       }
     });
-    // 폰트 크기 팝오버도 moa가 폰트 스케일을 제어 중이면 잠근다.
-    if (chatFontScalePopover) {
-      const item = chatFontScalePopover.closest(".settings-item");
-      const trig = chatFontScalePopover.querySelector(
-        ".settings-popover-trigger",
-      );
+    // 폰트 크기 입력도 moa가 폰트 스케일을 제어 중이면 잠근다.
+    if (chatFontScaleInput) {
+      const item = chatFontScaleInput.closest(".settings-item");
       if (locked.has("chatFontScale")) {
-        if (trig) trig.disabled = true;
+        chatFontScaleInput.disabled = true;
         item?.classList.add("is-locked");
         item?.setAttribute("title", "배지 모아 챗이 이 기능을 제어 중입니다");
       } else {
-        if (trig) trig.disabled = false;
+        chatFontScaleInput.disabled = false;
         item?.classList.remove("is-locked");
         item?.removeAttribute("title");
       }
@@ -339,6 +267,34 @@
   });
   loadVideoFilterAlwaysOn();
 
+  // ── 되감기·앞으로 간격(1~60초, 기본 10) ──────────────────────────────────
+  const SEEK_STEP_KEY = "cheeseSeekStepS";
+  const seekStepInput = document.querySelector("[data-seek-step]");
+  function clampSeekStep(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 10;
+    return Math.min(60, Math.max(1, Math.round(n)));
+  }
+  if (seekStepInput) {
+    (async () => {
+      try {
+        const d = await chrome.storage?.local?.get(SEEK_STEP_KEY);
+        seekStepInput.value = String(clampSeekStep(d?.[SEEK_STEP_KEY] ?? 10));
+      } catch {
+        seekStepInput.value = "10";
+      }
+    })();
+    const save = () => {
+      const v = clampSeekStep(seekStepInput.value);
+      seekStepInput.value = String(v); // 범위 밖 입력 보정
+      try {
+        chrome.storage?.local?.set({ [SEEK_STEP_KEY]: v });
+      } catch {}
+    };
+    seekStepInput.addEventListener("change", save);
+    seekStepInput.addEventListener("blur", save);
+  }
+
   // ── 채널 라이브 바로가기 버튼(전역, 기본 ON) ──────────────────────────────
   // 체크=표시. 미설정이면 표시(true)가 기본.
   const CHANNEL_LIVE_BUTTON_KEY = "cheeseChannelLiveButton";
@@ -411,6 +367,84 @@
     } catch {}
   });
   loadFollowPreview();
+
+  // ── 미리보기 음소거 고정(체크=항상 음소거, 해제=항상 소리 켬) ───────────────
+  const FOLLOW_PREVIEW_MUTED_KEY = "cheeseFollowPreviewMuted";
+  const followPreviewMutedInput = document.querySelector(
+    "[data-follow-preview-muted]",
+  );
+  async function loadFollowPreviewMuted() {
+    let muted = true; // 기본 음소거
+    try {
+      const data = await chrome.storage?.local?.get(FOLLOW_PREVIEW_MUTED_KEY);
+      muted = data?.[FOLLOW_PREVIEW_MUTED_KEY] !== false;
+    } catch {}
+    if (followPreviewMutedInput) followPreviewMutedInput.checked = muted;
+  }
+  followPreviewMutedInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [FOLLOW_PREVIEW_MUTED_KEY]: followPreviewMutedInput.checked,
+      });
+    } catch {}
+  });
+  loadFollowPreviewMuted();
+
+  // ── 미리보기 썸네일로만 보기(체크=영상 대신 썸네일 이미지) ─────────────────
+  const FOLLOW_PREVIEW_THUMB_KEY = "cheeseFollowPreviewThumbOnly";
+  const followPreviewThumbInput = document.querySelector(
+    "[data-follow-preview-thumb]",
+  );
+  async function loadFollowPreviewThumb() {
+    let on = false; // 기본 영상
+    try {
+      const data = await chrome.storage?.local?.get(FOLLOW_PREVIEW_THUMB_KEY);
+      on = data?.[FOLLOW_PREVIEW_THUMB_KEY] === true;
+    } catch {}
+    if (followPreviewThumbInput) followPreviewThumbInput.checked = on;
+  }
+  followPreviewThumbInput?.addEventListener("change", () => {
+    try {
+      chrome.storage?.local?.set({
+        [FOLLOW_PREVIEW_THUMB_KEY]: followPreviewThumbInput.checked,
+      });
+    } catch {}
+  });
+  loadFollowPreviewThumb();
+
+  // ── 미리보기 헤더 폰트 크기(입력 80~200%, 저장 배율 0.8~2.0) ────────────────
+  const FOLLOW_PREVIEW_HEADER_FONT_KEY = "cheeseFollowPreviewHeaderFont";
+  const followHeaderFontInput = document.querySelector(
+    "[data-follow-header-font]",
+  );
+  function clampHeaderFontPct(v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return 100;
+    return Math.min(200, Math.max(80, Math.round(n / 5) * 5));
+  }
+  if (followHeaderFontInput) {
+    (async () => {
+      try {
+        const d = await chrome.storage?.local?.get(FOLLOW_PREVIEW_HEADER_FONT_KEY);
+        const scale = Number(d?.[FOLLOW_PREVIEW_HEADER_FONT_KEY]);
+        const pct = Number.isFinite(scale) && scale > 0 ? scale * 100 : 100;
+        followHeaderFontInput.value = String(clampHeaderFontPct(pct));
+      } catch {
+        followHeaderFontInput.value = "100";
+      }
+    })();
+    const saveHeaderFont = () => {
+      const pct = clampHeaderFontPct(followHeaderFontInput.value);
+      followHeaderFontInput.value = String(pct);
+      try {
+        chrome.storage?.local?.set({
+          [FOLLOW_PREVIEW_HEADER_FONT_KEY]: pct / 100,
+        });
+      } catch {}
+    };
+    followHeaderFontInput.addEventListener("change", saveHeaderFont);
+    followHeaderFontInput.addEventListener("blur", saveHeaderFont);
+  }
 
   // ── 미리보기 자동 종료 시간(30/60/120/180/300초, 상한 5분) ─────────────────
   const FOLLOW_PREVIEW_MAXLIFE_KEY = "cheeseFollowPreviewMaxLifeSec";

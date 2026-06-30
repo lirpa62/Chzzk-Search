@@ -92,6 +92,15 @@
           <button
             type="button"
             class="settings-tab"
+            data-tab="vod"
+            role="tab"
+            aria-selected="false"
+          >
+            다시보기
+          </button>
+          <button
+            type="button"
+            class="settings-tab"
             data-tab="search"
             role="tab"
             aria-selected="false"
@@ -237,6 +246,26 @@
                 </label>
               </li>
               <li class="settings-item">
+                <label for="seekStepInput">
+                  <span class="settings-item-name">되감기·앞으로 간격</span>
+                  <span class="settings-item-desc"
+                    >되감기/앞으로 버튼·방향키 한 번에 이동(1~60초)</span
+                  >
+                </label>
+                <span class="settings-custom-input">
+                  <input
+                    type="number"
+                    id="seekStepInput"
+                    min="1"
+                    max="60"
+                    step="1"
+                    inputmode="numeric"
+                    data-seek-step
+                  />
+                  <small>초</small>
+                </span>
+              </li>
+              <li class="settings-item">
                 <label>
                   <span class="settings-item-name">스트림 정보 숨김</span>
                   <span class="settings-item-desc"
@@ -262,31 +291,6 @@
               </li>
               <li class="settings-item">
                 <label>
-                  <span class="settings-item-name">영상 더보기 아래 배치</span>
-                  <span class="settings-item-desc"
-                    >다시보기에서 영상 옆 정보(영상 더보기)를 영상 아래로
-                    배치(체크=사용)</span
-                  >
-                </label>
-                <label class="settings-switch">
-                  <input type="checkbox" data-feature="vodMoreBelow" />
-                  <i aria-hidden="true"></i>
-                </label>
-              </li>
-              <li class="settings-item">
-                <label>
-                  <span class="settings-item-name">영상 더보기 숨김</span>
-                  <span class="settings-item-desc"
-                    >다시보기에서 영상 옆 정보(영상 더보기) 숨김(체크=숨김)</span
-                  >
-                </label>
-                <label class="settings-switch">
-                  <input type="checkbox" data-feature="vodMoreHide" />
-                  <i aria-hidden="true"></i>
-                </label>
-              </li>
-              <li class="settings-item">
-                <label>
                   <span class="settings-item-name">탭 음소거 숨김</span>
                   <span class="settings-item-desc"
                     >브라우저 탭 전체를 음소거하는 버튼</span
@@ -294,30 +298,6 @@
                 </label>
                 <label class="settings-switch">
                   <input type="checkbox" data-feature="tabMute" />
-                  <i aria-hidden="true"></i>
-                </label>
-              </li>
-              <li class="settings-item">
-                <label>
-                  <span class="settings-item-name">댓글 타임스탬프 숨김</span>
-                  <span class="settings-item-desc">재생바 댓글 마커·목록</span>
-                </label>
-                <label class="settings-switch">
-                  <input type="checkbox" data-feature="commentTimestamp" />
-                  <i aria-hidden="true"></i>
-                </label>
-              </li>
-              <li class="settings-item">
-                <label>
-                  <span class="settings-item-name"
-                    >미리보기 실제 시각 숨김</span
-                  >
-                  <span class="settings-item-desc"
-                    >다시보기 탐색 미리보기의 방송 당시 시각</span
-                  >
-                </label>
-                <label class="settings-switch">
-                  <input type="checkbox" data-feature="seekPreviewRealtime" />
                   <i aria-hidden="true"></i>
                 </label>
               </li>
@@ -407,6 +387,65 @@
               줄입니다. 값이 작을수록 라이브에 바짝 붙지만 끊김이 잦을 수
               있습니다. 커스텀은 시작 2~30초, 목표 1~10초(시작 &gt; 목표).
             </p>
+          </section>
+
+          <section
+            class="settings-group"
+            data-panel="vod"
+            aria-label="다시보기 기능"
+          >
+            <h2 class="settings-group-title">다시보기</h2>
+            <ul class="settings-list">
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">영상 더보기 아래 배치</span>
+                  <span class="settings-item-desc"
+                    >다시보기에서 영상 옆 정보(영상 더보기)를 영상 아래로
+                    배치(체크=사용)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="vodMoreBelow" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">영상 더보기 숨김</span>
+                  <span class="settings-item-desc"
+                    >다시보기에서 영상 옆 정보(영상 더보기) 숨김(체크=숨김)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="vodMoreHide" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">댓글 타임스탬프 숨김</span>
+                  <span class="settings-item-desc">재생바 댓글 마커·목록</span>
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="commentTimestamp" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name"
+                    >미리보기 실제 시각 숨김</span
+                  >
+                  <span class="settings-item-desc"
+                    >다시보기 탐색 미리보기의 방송 당시 시각</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-feature="seekPreviewRealtime" />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+            </ul>
           </section>
 
           <section
@@ -874,7 +913,7 @@
                 <label>
                   <span class="settings-item-name">라이브 영상 미리보기</span>
                   <span class="settings-item-desc"
-                    >라이브 중인 팔로잉 채널에 마우스를 올리면 음소거 영상
+                    >라이브 중인 팔로잉 채널에 마우스를 올리면 영상
                     표시(체크=표시)</span
                   >
                 </label>
@@ -882,6 +921,50 @@
                   <input type="checkbox" data-follow-preview />
                   <i aria-hidden="true"></i>
                 </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">미리보기 음소거</span>
+                  <span class="settings-item-desc"
+                    >켜면 항상 음소거, 끄면 항상 소리 켬으로 고정(체크=음소거)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-follow-preview-muted />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label>
+                  <span class="settings-item-name">썸네일로만 보기</span>
+                  <span class="settings-item-desc"
+                    >영상 대신 라이브 썸네일 이미지만 표시(소리·트래픽 없음, 체크=썸네일)</span
+                  >
+                </label>
+                <label class="settings-switch">
+                  <input type="checkbox" data-follow-preview-thumb />
+                  <i aria-hidden="true"></i>
+                </label>
+              </li>
+              <li class="settings-item">
+                <label for="followHeaderFontInput">
+                  <span class="settings-item-name">헤더 폰트 크기</span>
+                  <span class="settings-item-desc"
+                    >미리보기 상단 정보(제목·채널·시청자) 글자 크기(80~200%)</span
+                  >
+                </label>
+                <span class="settings-custom-input">
+                  <input
+                    type="number"
+                    id="followHeaderFontInput"
+                    min="80"
+                    max="200"
+                    step="5"
+                    inputmode="numeric"
+                    data-follow-header-font
+                  />
+                  <small>%</small>
+                </span>
               </li>
             </ul>
             <h3 class="settings-subgroup-title">자동 종료</h3>
@@ -1027,34 +1110,24 @@
                 </label>
               </li>
               <li class="settings-item">
-                <label id="chatFontScaleLabel">
+                <label for="chatFontScaleInput" id="chatFontScaleLabel">
                   <span class="settings-item-name">채팅 폰트 크기</span>
                   <span class="settings-item-desc"
-                    >채팅 글자·이모티콘·배지 크기 배율</span
+                    >채팅 글자·이모티콘·배지 크기 배율(80~200%)</span
                   >
                 </label>
-                <div class="settings-popover" data-chat-font-scale>
-                  <button
-                    type="button"
-                    class="settings-popover-trigger"
-                    aria-haspopup="listbox"
-                    aria-expanded="false"
-                    aria-labelledby="chatFontScaleLabel"
-                  >
-                    <span class="settings-popover-value">기본 (100%)</span>
-                    <span class="settings-popover-caret" aria-hidden="true">▾</span>
-                  </button>
-                  <ul class="settings-popover-list" role="listbox" hidden>
-                    <li role="option" data-value="0.8">작게 (80%)</li>
-                    <li role="option" data-value="0.9">조금 작게 (90%)</li>
-                    <li role="option" data-value="1" aria-selected="true">기본 (100%)</li>
-                    <li role="option" data-value="1.1">조금 크게 (110%)</li>
-                    <li role="option" data-value="1.2">크게 (120%)</li>
-                    <li role="option" data-value="1.5">더 크게 (150%)</li>
-                    <li role="option" data-value="1.75">매우 크게 (175%)</li>
-                    <li role="option" data-value="2">최대 (200%)</li>
-                  </ul>
-                </div>
+                <span class="settings-custom-input">
+                  <input
+                    type="number"
+                    id="chatFontScaleInput"
+                    min="80"
+                    max="200"
+                    step="5"
+                    inputmode="numeric"
+                    data-chat-font-scale
+                  />
+                  <small>%</small>
+                </span>
               </li>
             </ul>
             <p class="settings-group-desc">

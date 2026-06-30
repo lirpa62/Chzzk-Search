@@ -2605,9 +2605,252 @@ async function fetchLiveStatusByChannelId(channelId) {
   };
 }
 
+// ══ 통나무파워 시청 적립 추적(background, con-chzzk 이식) ══════════════════════
+// content의 setInterval은 탭이 백그라운드(document.hidden)면 5분 체크가 멈추고 SPA
+// 이동 시 상태가 휘발한다. chrome.alarms로 background에서 5분마다 보유량 delta를
+// 비교해 '적립 중'을 판정하고, storage.session에 채널별 상태를 저장한다. 표시(배지
+// progress 토글)는 content가 broadcast(LOG_POWER_WATCH_REWARD_STATUS)를 받아 한다.
+const LP_WATCH_STATE_PREFIX = "logpower_watch_reward_state:";
+const LP_WATCH_ALARM_PREFIX = "logpower:watch-reward:";
+const LP_WATCH_INTERVAL_MIN = 5;
+const LP_WATCH_ACTIVE_TTL_MS = 6 * 60 * 1000; // 적립 활성 6분
+const LP_WATCH_MAX_MS = 75 * 60 * 1000; // 최대 추적 75분
+const LP_WATCH_AMOUNTS = [10, 12, 20]; // tier0/1/2 시청 보상액
+const LP_SUBSCRIBE_URL =
+  "https://api.chzzk.naver.com/commercial/v1/subscribe/channels";
+const LP_CHANNELS_PREFIX = "https://api.chzzk.naver.com/service/v1/channels";
+
+function lpWatchStateKey(channelId) {
+  return `${LP_WATCH_STATE_PREFIX}${channelId}`;
+}
+function lpWatchAlarmName(channelId) {
+  return `${LP_WATCH_ALARM_PREFIX}${channelId}`;
+}
+function lpChannelIdFromAlarm(name) {
+  return String(name || "").startsWith(LP_WATCH_ALARM_PREFIX)
+    ? name.slice(LP_WATCH_ALARM_PREFIX.length)
+    : "";
+}
+
+async function lpGetWatchState(channelId) {
+  try {
+    const k = lpWatchStateKey(channelId);
+    const store = await chrome.storage.session.get(k);
+    return store[k] || null;
+  } catch {
+    return null;
+  }
+}
+async function lpSetWatchState(channelId, state) {
+  try {
+    await chrome.storage.session.set({ [lpWatchStateKey(channelId)]: state });
+  } catch {}
+}
+async function lpClearWatchState(channelId) {
+  try {
+    await chrome.storage.session.remove(lpWatchStateKey(channelId));
+  } catch {}
+  try {
+    await chrome.alarms.clear(lpWatchAlarmName(channelId));
+  } catch {}
+}
+
+function lpTierToAmount(tier) {
+  const n = Number(tier);
+  if (n === 2) return 20;
+  if (n === 1) return 12;
+  if (n === 0) return 10;
+  return null;
+}
+
+// 구독 tier로 예상 시청 보상액(없으면 null → [10,12,20] 폴백).
+async function lpFetchExpectedAmount(channelId) {
+  try {
+    const res = await fetch(LP_SUBSCRIBE_URL, { credentials: "include" });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const list = Array.isArray(json?.content) ? json.content : [];
+    const item = list.find((x) => String(x?.channelId) === String(channelId));
+    if (!item) return null;
+    const tierNo = Number(item.tierNo);
+    const tier = Number.isFinite(tierNo)
+      ? tierNo
+      : Number(String(item.tier || "").match(/TIER_(\d+)/i)?.[1] || 0);
+    return lpTierToAmount(tier);
+  } catch {
+    return null;
+  }
+}
+
+// 현재 보유량(raw). 못 찾으면 undefined(0과 구분 — 오탐 방지).
+async function lpFetchAmount(channelId) {
+  try {
+    const res = await fetch(`${LP_CHANNELS_PREFIX}/${channelId}/log-power`, {
+      credentials: "include",
+    });
+    if (!res.ok) return undefined;
+    const json = await res.json();
+    const amount = Number(json?.content?.amount);
+    return Number.isFinite(amount) ? amount : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function lpIsChannelLive(channelId) {
+  try {
+    const res = await fetch(
+      `${LP_CHANNELS_PREFIX}/${channelId}/live-status`,
+      { credentials: "include" },
+    );
+    if (!res.ok) return null; // 불확실
+    const json = await res.json();
+    const c = json?.content;
+    if (!c) return null;
+    return c.status === "OPEN" && !c.closeDate;
+  } catch {
+    return null;
+  }
+}
+
+// content로 적립 상태 broadcast(모든 치지직 탭에). content는 채널 일치 시 표시.
+function lpStateToStatus(state, activeOverride) {
+  const now = Date.now();
+  const active =
+    activeOverride != null
+      ? activeOverride
+      : Number(state?.activeUntil || 0) > now;
+  return {
+    type: "LOG_POWER_WATCH_REWARD_STATUS",
+    channelId: state?.channelId || "",
+    active,
+    expectedAmount: state?.expectedAmount || null,
+  };
+}
+function lpBroadcast(message) {
+  try {
+    chrome.tabs.query({ url: "https://chzzk.naver.com/*" }, (tabs) => {
+      void chrome.runtime.lastError;
+      for (const t of tabs || []) {
+        if (t.id != null) {
+          chrome.tabs.sendMessage(t.id, message, () => {
+            void chrome.runtime.lastError;
+          });
+        }
+      }
+    });
+  } catch {}
+}
+
+// content 요청으로 적립 추적 시작(채널 진입). 이미 추적 중이면 baseline 유지.
+async function lpStartTracking({ channelId, initialAmount }) {
+  if (!channelId) return null;
+  const now = Date.now();
+  const existing = await lpGetWatchState(channelId);
+  if (
+    existing &&
+    now - Number(existing.startedAt || 0) <= LP_WATCH_MAX_MS
+  ) {
+    // 추적 유지(알람만 보장).
+    chrome.alarms.create(lpWatchAlarmName(channelId), {
+      delayInMinutes: LP_WATCH_INTERVAL_MIN,
+      periodInMinutes: LP_WATCH_INTERVAL_MIN,
+    });
+    return lpStateToStatus(existing);
+  }
+  const expected = await lpFetchExpectedAmount(channelId);
+  // baseline: content가 보낸 initialAmount 우선, 없으면 raw 조회.
+  let baseline = Number(initialAmount);
+  if (!Number.isFinite(baseline)) baseline = await lpFetchAmount(channelId);
+  if (!Number.isFinite(baseline)) return null;
+  const state = {
+    channelId,
+    startedAt: now,
+    lastAmount: baseline,
+    expectedAmount: expected,
+    activeUntil: 0,
+    misses: 0,
+  };
+  await lpSetWatchState(channelId, state);
+  chrome.alarms.create(lpWatchAlarmName(channelId), {
+    delayInMinutes: LP_WATCH_INTERVAL_MIN,
+    periodInMinutes: LP_WATCH_INTERVAL_MIN,
+  });
+  return lpStateToStatus(state);
+}
+
+// 5분 알람 — 보유량 delta로 적립 판정.
+async function lpCheckProgress(channelId) {
+  const state = await lpGetWatchState(channelId);
+  if (!state) {
+    try {
+      await chrome.alarms.clear(lpWatchAlarmName(channelId));
+    } catch {}
+    return;
+  }
+  const now = Date.now();
+  if (now - Number(state.startedAt || now) > LP_WATCH_MAX_MS) {
+    await lpClearWatchState(channelId);
+    lpBroadcast(lpStateToStatus(state, false));
+    return;
+  }
+  // 라이브 종료면 정리(null=불확실은 계속 진행).
+  const live = await lpIsChannelLive(channelId);
+  if (live === false) {
+    await lpClearWatchState(channelId);
+    lpBroadcast({ type: "LOG_POWER_LIVE_ENDED", channelId });
+    return;
+  }
+  const amount = await lpFetchAmount(channelId);
+  if (!Number.isFinite(amount)) return; // 누락 → 판정 스킵
+  const delta = amount - Number(state.lastAmount || 0);
+  const targets = state.expectedAmount
+    ? [state.expectedAmount]
+    : LP_WATCH_AMOUNTS;
+  const wasActive = Number(state.activeUntil || 0) > now;
+  const next = { ...state, lastAmount: amount };
+  if (targets.includes(delta)) {
+    next.activeUntil = now + LP_WATCH_ACTIVE_TTL_MS;
+    next.misses = 0;
+    await lpSetWatchState(channelId, next);
+    lpBroadcast(lpStateToStatus(next, true));
+    return;
+  }
+  next.misses = Number(state.misses || 0) + 1;
+  if (next.misses >= 2) next.activeUntil = 0;
+  await lpSetWatchState(channelId, next);
+  if (wasActive && Number(next.activeUntil || 0) <= now) {
+    lpBroadcast(lpStateToStatus(next, false));
+  }
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  const channelId = lpChannelIdFromAlarm(alarm?.name);
+  if (channelId) void lpCheckProgress(channelId);
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message) {
     return false;
+  }
+
+  if (message.type === "START_LOG_POWER_WATCH_REWARD_TRACKING") {
+    lpStartTracking({
+      channelId: message.channelId,
+      initialAmount: message.initialAmount,
+    })
+      .then((status) => sendResponse({ status }))
+      .catch(() => sendResponse({ status: null }));
+    return true;
+  }
+
+  if (message.type === "GET_LOG_POWER_WATCH_REWARD_STATUS") {
+    lpGetWatchState(message.channelId)
+      .then((state) =>
+        sendResponse({ status: state ? lpStateToStatus(state) : null }),
+      )
+      .catch(() => sendResponse({ status: null }));
+    return true;
   }
 
   // 탭 음소거 토글/조회 — 콘텐츠는 chrome.tabs.update를 못 쓰므로 background에서
