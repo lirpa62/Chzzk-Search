@@ -457,6 +457,8 @@
   let customShareMsg = null; // { kind: "ok"|"error", text } 안내 메시지
   const PRESET_SHARE_TYPE = "cheese-audio-mixer-presets"; // 공유 JSON 식별자
   const PRESET_SHARE_VERSION = 1;
+  // settings 플레이어 탭에서 지정하는 채널 무관 전역 기본 프리셋.
+  let globalDefaultPreset = { enabled: false, preset: "default" };
   // 프리셋(내장/커스텀) 적용 후 값을 수정해 벗어난 상태인지. true면 head에
   // "프리셋 추가" 빠른 저장 버튼이 나타난다.
   let presetDirty = false;
@@ -877,6 +879,54 @@
     return custom
       ? `${PRESETS.default.label} (${custom.name})`
       : PRESETS.default.label;
+  }
+
+  function normalizeGlobalDefaultPreset(value) {
+    const config = value && typeof value === "object" ? value : {};
+    return {
+      enabled: config.enabled === true,
+      preset: String(config.preset || "default"),
+    };
+  }
+
+  function customPresetById(id) {
+    return (
+      normalizeCustomPresets(state.customPresets).find((p) => p.id === id) ||
+      null
+    );
+  }
+
+  function snapshotForPresetKey(key) {
+    if (!key || key === "custom") return null;
+    if (PRESETS[key]) {
+      if (key === "default") {
+        const custom = effectiveDefaultCustom();
+        if (custom) return cloneMixerSnapshot(custom.snapshot);
+      }
+      return builtInPresetSnapshot(PRESETS[key]);
+    }
+    const custom = customPresetById(key);
+    return custom ? cloneMixerSnapshot(custom.snapshot) : null;
+  }
+
+  function applySnapshotToState(key, snapshot) {
+    if (!snapshot) return false;
+    state.preset = key;
+    state.gain = snapshot.gain;
+    state.eq = [...snapshot.eq];
+    state.comp = { ...snapshot.comp };
+    state.limiter = { ...snapshot.limiter };
+    state.normalizer = { ...snapshot.normalizer };
+    clearPresetDirty();
+    return true;
+  }
+
+  function applyGlobalDefaultPreset() {
+    if (!globalDefaultPreset.enabled) return false;
+    const key = globalDefaultPreset.preset || "default";
+    const snapshot = snapshotForPresetKey(key);
+    if (!snapshot) return false;
+    return applySnapshotToState(key, snapshot);
   }
 
   // 기본값 등록/해제.
@@ -1584,6 +1634,7 @@
           customPresets: normalizeCustomPresets(saved.customPresets),
           defaultCustomId: String(saved.defaultCustomId || ""),
         };
+        globalDefaultPreset = normalizeGlobalDefaultPreset(saved.globalDefault);
         // 기본값으로 등록된 커스텀이 더 이상 없으면(삭제됨) 등록 해제 → 원래 기본 복귀.
         if (
           state.defaultCustomId &&
@@ -1605,6 +1656,9 @@
             state.normalizer = snapshot.normalizer;
           }
         }
+        // 전역 기본값이 켜져 있으면 채널별 프리셋/값보다 우선 적용한다. enabled와
+        // userDisabled는 채널 저장값을 유지해 '항상 켜기'·직접 끔 의사는 보존한다.
+        applyGlobalDefaultPreset();
         // userDisabled 채널인데 로드 전 자동 활성화가 먼저 켰을 수 있다(레이스).
         // 저장된 의사를 존중해 확실히 끈다.
         if (state.userDisabled && audio.connected) {
@@ -1619,6 +1673,27 @@
       // 이미 state에 반영돼 있으므로 자동으로 켜도 그 프리셋이 적용된다).
       stateLoaded = true;
       maybeAutoEnableMixer();
+    } else if (e.data.type === "globals-changed") {
+      const prevEnabled = globalDefaultPreset.enabled;
+      const next = e.data.state || {};
+      state.customPresets = normalizeCustomPresets(next.customPresets);
+      state.defaultCustomId = String(next.defaultCustomId || "");
+      if (
+        state.defaultCustomId &&
+        !state.customPresets.some((p) => p.id === state.defaultCustomId)
+      ) {
+        state.defaultCustomId = "";
+      }
+      globalDefaultPreset = normalizeGlobalDefaultPreset(next.globalDefault);
+      if (!globalDefaultPreset.enabled) {
+        if (prevEnabled && currentMediaId) requestState(currentMediaId);
+        return;
+      }
+      if (applyGlobalDefaultPreset()) {
+        if (state.enabled) ensureEnabledGraph();
+        else applyState();
+        syncUI();
+      }
     }
   });
 

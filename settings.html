@@ -196,6 +196,43 @@
                   <i aria-hidden="true"></i>
                 </label>
               </li>
+              <li class="settings-item settings-item-stacked">
+                <div>
+                  <span class="settings-item-name">오디오 믹서 전역 기본값</span>
+                  <span class="settings-item-desc"
+                    >채널과 상관없이 선택한 프리셋을 기본값으로 적용</span
+                  >
+                </div>
+                <div class="settings-control-stack">
+                  <label class="settings-switch">
+                    <input type="checkbox" data-mixer-global-default-enabled />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div
+                    class="settings-preset-picker"
+                    data-global-default-picker="audio"
+                  >
+                    <button
+                      type="button"
+                      class="settings-popover-trigger"
+                      data-global-default-trigger
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                    >
+                      <span data-global-default-label>기본</span>
+                      <span class="settings-popover-caret" aria-hidden="true"
+                        >▾</span
+                      >
+                    </button>
+                    <ul
+                      class="settings-popover-list"
+                      data-global-default-list
+                      role="listbox"
+                      hidden
+                    ></ul>
+                  </div>
+                </div>
+              </li>
               <li class="settings-item">
                 <label>
                   <span class="settings-item-name">비디오 필터 숨김</span>
@@ -220,6 +257,46 @@
                   <input type="checkbox" data-video-filter-always-on />
                   <i aria-hidden="true"></i>
                 </label>
+              </li>
+              <li class="settings-item settings-item-stacked">
+                <div>
+                  <span class="settings-item-name">비디오 필터 전역 기본값</span>
+                  <span class="settings-item-desc"
+                    >채널과 상관없이 선택한 필터 프리셋을 기본값으로 적용</span
+                  >
+                </div>
+                <div class="settings-control-stack">
+                  <label class="settings-switch">
+                    <input
+                      type="checkbox"
+                      data-video-filter-global-default-enabled
+                    />
+                    <i aria-hidden="true"></i>
+                  </label>
+                  <div
+                    class="settings-preset-picker"
+                    data-global-default-picker="video"
+                  >
+                    <button
+                      type="button"
+                      class="settings-popover-trigger"
+                      data-global-default-trigger
+                      aria-haspopup="listbox"
+                      aria-expanded="false"
+                    >
+                      <span data-global-default-label>원본</span>
+                      <span class="settings-popover-caret" aria-hidden="true"
+                        >▾</span
+                      >
+                    </button>
+                    <ul
+                      class="settings-popover-list"
+                      data-global-default-list
+                      role="listbox"
+                      hidden
+                    ></ul>
+                  </div>
+                </div>
               </li>
               <li class="settings-item">
                 <label>

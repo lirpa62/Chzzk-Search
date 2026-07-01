@@ -11707,6 +11707,8 @@ const AUDIO_MIXER_STORAGE_PREFIX = "audioMixer:";
 const AUDIO_MIXER_PRESETS_KEY = "audioMixer:presets";
 // '기본' 프리셋을 대체하는 커스텀 프리셋 id(전역, 모든 채널 공유).
 const AUDIO_MIXER_DEFAULT_CUSTOM_KEY = "audioMixer:defaultCustomId";
+// 채널 저장값보다 우선 적용할 전역 기본 프리셋 설정.
+const AUDIO_MIXER_GLOBAL_DEFAULT_KEY = "audioMixer:globalDefault";
 
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
@@ -11719,8 +11721,9 @@ window.addEventListener("message", (event) => {
   if (data.type === "save") {
     try {
       const incoming = data.state || {};
-      // customPresets·defaultCustomId는 전역으로, 나머지는 per-media로 분리 저장.
-      const { customPresets, defaultCustomId, ...perMedia } = incoming;
+      // customPresets·defaultCustomId·globalDefault는 전역으로, 나머지는 per-media로 분리 저장.
+      const { customPresets, defaultCustomId, globalDefault, ...perMedia } =
+        incoming;
       const toSet = { [key]: perMedia };
       if (Array.isArray(customPresets)) {
         toSet[AUDIO_MIXER_PRESETS_KEY] = customPresets;
@@ -11728,22 +11731,37 @@ window.addEventListener("message", (event) => {
       if (typeof defaultCustomId === "string") {
         toSet[AUDIO_MIXER_DEFAULT_CUSTOM_KEY] = defaultCustomId;
       }
+      if (globalDefault && typeof globalDefault === "object") {
+        toSet[AUDIO_MIXER_GLOBAL_DEFAULT_KEY] = globalDefault;
+      }
       chrome.storage.local.set(toSet);
     } catch {}
   } else if (data.type === "load") {
     try {
       chrome.storage.local.get(
-        [key, AUDIO_MIXER_PRESETS_KEY, AUDIO_MIXER_DEFAULT_CUSTOM_KEY],
+        [
+          key,
+          AUDIO_MIXER_PRESETS_KEY,
+          AUDIO_MIXER_DEFAULT_CUSTOM_KEY,
+          AUDIO_MIXER_GLOBAL_DEFAULT_KEY,
+        ],
         (result) => {
           const saved = result?.[key] || null;
           const presets = result?.[AUDIO_MIXER_PRESETS_KEY] || [];
           const defaultCustomId = String(
             result?.[AUDIO_MIXER_DEFAULT_CUSTOM_KEY] || "",
           );
+          const globalDefault =
+            result?.[AUDIO_MIXER_GLOBAL_DEFAULT_KEY] || null;
           // per-media 설정에 전역 커스텀 프리셋·기본값 id를 합쳐서 반환.
           const merged = saved
-            ? { ...saved, customPresets: presets, defaultCustomId }
-            : { customPresets: presets, defaultCustomId };
+            ? {
+                ...saved,
+                customPresets: presets,
+                defaultCustomId,
+                globalDefault,
+              }
+            : { customPresets: presets, defaultCustomId, globalDefault };
           window.postMessage(
             {
               source: "cheese-audio-mixer-content",
@@ -11756,6 +11774,42 @@ window.addEventListener("message", (event) => {
         },
       );
     } catch {}
+  }
+});
+
+async function broadcastAudioMixerGlobals() {
+  if (!chrome.storage?.local) return;
+  try {
+    const result = await chrome.storage.local.get([
+      AUDIO_MIXER_PRESETS_KEY,
+      AUDIO_MIXER_DEFAULT_CUSTOM_KEY,
+      AUDIO_MIXER_GLOBAL_DEFAULT_KEY,
+    ]);
+    window.postMessage(
+      {
+        source: "cheese-audio-mixer-content",
+        type: "globals-changed",
+        state: {
+          customPresets: result?.[AUDIO_MIXER_PRESETS_KEY] || [],
+          defaultCustomId: String(
+            result?.[AUDIO_MIXER_DEFAULT_CUSTOM_KEY] || "",
+          ),
+          globalDefault: result?.[AUDIO_MIXER_GLOBAL_DEFAULT_KEY] || null,
+        },
+      },
+      location.origin,
+    );
+  } catch {}
+}
+
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (
+    changes[AUDIO_MIXER_PRESETS_KEY] ||
+    changes[AUDIO_MIXER_DEFAULT_CUSTOM_KEY] ||
+    changes[AUDIO_MIXER_GLOBAL_DEFAULT_KEY]
+  ) {
+    void broadcastAudioMixerGlobals();
   }
 });
 
@@ -11788,6 +11842,7 @@ window.addEventListener("message", (event) => {
 // videoFilter:<mediaId>, 커스텀 프리셋은 전역 videoFilter:presets에 저장한다.
 const VIDEO_FILTER_STORAGE_PREFIX = "videoFilter:";
 const VIDEO_FILTER_PRESETS_KEY = "videoFilter:presets";
+const VIDEO_FILTER_GLOBAL_DEFAULT_KEY = "videoFilter:globalDefault";
 
 window.addEventListener("message", (event) => {
   if (event.source !== window) return;
@@ -11800,31 +11855,70 @@ window.addEventListener("message", (event) => {
   if (data.type === "save") {
     try {
       const incoming = data.state || {};
-      const { customPresets, ...perMedia } = incoming;
+      const { customPresets, globalDefault, ...perMedia } = incoming;
       const toSet = { [key]: perMedia };
       if (Array.isArray(customPresets)) {
         toSet[VIDEO_FILTER_PRESETS_KEY] = customPresets;
+      }
+      if (globalDefault && typeof globalDefault === "object") {
+        toSet[VIDEO_FILTER_GLOBAL_DEFAULT_KEY] = globalDefault;
       }
       chrome.storage.local.set(toSet);
     } catch {}
   } else if (data.type === "load") {
     try {
-      chrome.storage.local.get([key, VIDEO_FILTER_PRESETS_KEY], (result) => {
-        const saved = result?.[key] || null;
-        const presets = result?.[VIDEO_FILTER_PRESETS_KEY] || [];
-        const merged = saved
-          ? { ...saved, customPresets: presets }
-          : { customPresets: presets };
-        window.postMessage(
-          {
-            source: "cheese-video-filter-content",
-            type: "loaded",
-            channelId,
-            state: merged,
-          },
-          location.origin,
-        );
-      });
+      chrome.storage.local.get(
+        [key, VIDEO_FILTER_PRESETS_KEY, VIDEO_FILTER_GLOBAL_DEFAULT_KEY],
+        (result) => {
+          const saved = result?.[key] || null;
+          const presets = result?.[VIDEO_FILTER_PRESETS_KEY] || [];
+          const globalDefault =
+            result?.[VIDEO_FILTER_GLOBAL_DEFAULT_KEY] || null;
+          const merged = saved
+            ? { ...saved, customPresets: presets, globalDefault }
+            : { customPresets: presets, globalDefault };
+          window.postMessage(
+            {
+              source: "cheese-video-filter-content",
+              type: "loaded",
+              channelId,
+              state: merged,
+            },
+            location.origin,
+          );
+        },
+      );
     } catch {}
+  }
+});
+
+async function broadcastVideoFilterGlobals() {
+  if (!chrome.storage?.local) return;
+  try {
+    const result = await chrome.storage.local.get([
+      VIDEO_FILTER_PRESETS_KEY,
+      VIDEO_FILTER_GLOBAL_DEFAULT_KEY,
+    ]);
+    window.postMessage(
+      {
+        source: "cheese-video-filter-content",
+        type: "globals-changed",
+        state: {
+          customPresets: result?.[VIDEO_FILTER_PRESETS_KEY] || [],
+          globalDefault: result?.[VIDEO_FILTER_GLOBAL_DEFAULT_KEY] || null,
+        },
+      },
+      location.origin,
+    );
+  } catch {}
+}
+
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== "local") return;
+  if (
+    changes[VIDEO_FILTER_PRESETS_KEY] ||
+    changes[VIDEO_FILTER_GLOBAL_DEFAULT_KEY]
+  ) {
+    void broadcastVideoFilterGlobals();
   }
 });

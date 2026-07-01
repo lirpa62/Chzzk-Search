@@ -50,3 +50,6 @@ Temporary Items
 .claude
 
 dist/*
+
+# Browser-specific generated build directories
+Chzzk-Platter-Firefox/

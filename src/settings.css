@@ -200,6 +200,17 @@ body {
   cursor: pointer;
 }
 
+.settings-item-stacked {
+  align-items: flex-start;
+}
+
+.settings-item-stacked > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .settings-item-name {
   font-size: 13px;
   font-weight: 700;
@@ -257,6 +268,53 @@ body {
 }
 
 .settings-switch input:focus-visible + i {
+  outline: 2px solid var(--popup-focus-ring);
+  outline-offset: 2px;
+}
+
+.settings-control-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex: none;
+}
+
+.settings-preset-picker {
+  width: 150px;
+}
+
+.settings-preset-picker .settings-popover-trigger {
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-preset-picker .settings-popover-trigger span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-select {
+  box-sizing: border-box;
+  width: 150px;
+  min-width: 0;
+  padding: 7px 26px 7px 9px;
+  border: 1px solid var(--popup-border);
+  border-radius: 8px;
+  background: var(--popup-surface);
+  color: var(--popup-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.settings-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings-select:focus-visible {
   outline: 2px solid var(--popup-focus-ring);
   outline-offset: 2px;
 }
@@ -333,13 +391,27 @@ body {
 }
 
 .settings-popover-list [role="option"] {
+  appearance: none;
+  display: block;
+  width: 100%;
   padding: 8px 10px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   font-size: 13px;
   font-weight: 700;
   color: var(--popup-text);
   cursor: pointer;
+  text-align: left;
   white-space: nowrap;
+}
+
+.settings-popover-group {
+  padding: 6px 10px 4px;
+  color: var(--popup-muted);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: default;
 }
 
 .settings-popover-list [role="option"]:hover {

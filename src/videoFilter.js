@@ -314,6 +314,7 @@
   let customExportSelected = new Set();
   let customImportText = "";
   let customShareMsg = null; // { kind, text }
+  let globalDefaultPreset = { enabled: false, preset: "default" };
 
   // 프리셋에서 벗어나 수정된 상태인지(head에 "프리셋 추가"/"초기화" 표시).
   let presetDirty = false;
@@ -822,6 +823,34 @@
     return custom ? custom.name : "";
   }
 
+  function normalizeGlobalDefaultPreset(value) {
+    const config = value && typeof value === "object" ? value : {};
+    return {
+      enabled: config.enabled === true,
+      preset: String(config.preset || "default"),
+    };
+  }
+
+  function snapshotForPresetKey(key) {
+    if (!key || key === "custom") return null;
+    if (PRESETS[key]) return presetSnapshot(PRESETS[key]);
+    const custom = normalizeCustomPresets(state.customPresets).find(
+      (preset) => preset.id === key,
+    );
+    return custom ? cloneFilters(custom.filters) : null;
+  }
+
+  function applyGlobalDefaultPreset() {
+    if (!globalDefaultPreset.enabled) return false;
+    const key = globalDefaultPreset.preset || "default";
+    const snapshot = snapshotForPresetKey(key);
+    if (!snapshot) return false;
+    state.preset = key;
+    state.filters = cloneFilters(snapshot);
+    clearPresetDirty();
+    return true;
+  }
+
   function enterCustomFromEdit() {
     ensureFilterEnabled();
     if (isRealPreset(state.preset)) {
@@ -1305,11 +1334,27 @@
           filters: cloneFilters(saved.filters),
           customPresets: normalizeCustomPresets(saved.customPresets),
         };
+        globalDefaultPreset = normalizeGlobalDefaultPreset(saved.globalDefault);
+        applyGlobalDefaultPreset();
         if (state.enabled) applyState();
         else clearFilter();
         syncUI();
         // 저장된 enabled가 false여도 '항상 켜기'면 자동 활성화(opt-out 채널 제외).
         maybeAutoEnableFilter();
+      }
+    } else if (e.data.type === "globals-changed") {
+      const prevEnabled = globalDefaultPreset.enabled;
+      const next = e.data.state || {};
+      state.customPresets = normalizeCustomPresets(next.customPresets);
+      globalDefaultPreset = normalizeGlobalDefaultPreset(next.globalDefault);
+      if (!globalDefaultPreset.enabled) {
+        if (prevEnabled && currentMediaId) requestState(currentMediaId);
+        return;
+      }
+      if (applyGlobalDefaultPreset()) {
+        if (state.enabled) applyState();
+        else clearFilter();
+        syncUI();
       }
     }
   });

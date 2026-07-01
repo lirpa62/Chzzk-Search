@@ -240,6 +240,314 @@
   });
   loadMixerAlwaysOn();
 
+  // ── 오디오 믹서 전역 기본값(채널 무관) ────────────────────────────────────
+  const AUDIO_MIXER_PRESETS_KEY = "audioMixer:presets";
+  const AUDIO_MIXER_GLOBAL_DEFAULT_KEY = "audioMixer:globalDefault";
+  const VIDEO_FILTER_PRESETS_KEY = "videoFilter:presets";
+  const VIDEO_FILTER_GLOBAL_DEFAULT_KEY = "videoFilter:globalDefault";
+  const MIXER_BUILT_IN_PRESETS = [
+    ["default", "기본"],
+    ["voice", "저챗·라디오"],
+    ["game", "게임 방송"],
+    ["outdoor", "야외방송"],
+    ["music", "노래 방송"],
+    ["classical", "클래식·재즈"],
+    ["movie", "영화·드라마"],
+    ["anime", "애니"],
+    ["sports", "스포츠"],
+    ["asmr", "ASMR"],
+  ];
+  const VIDEO_FILTER_BUILT_IN_PRESETS = [
+    ["default", "원본"],
+    ["fps", "FPS 게임"],
+    ["moba", "롤·AOS"],
+    ["game", "게임 일반"],
+    ["horror", "공포 게임"],
+    ["outdoor", "야외방송"],
+    ["sports", "스포츠"],
+    ["food", "먹방·쿡방"],
+    ["cam", "캠방송"],
+    ["vtuber", "버츄얼"],
+    ["night", "야간 시청"],
+    ["cinema", "시네마틱"],
+  ];
+  const mixerGlobalDefaultEnabledInput = document.querySelector(
+    "[data-mixer-global-default-enabled]",
+  );
+  const videoFilterGlobalDefaultEnabledInput = document.querySelector(
+    "[data-video-filter-global-default-enabled]",
+  );
+  let mixerCustomPresets = [];
+  let mixerGlobalDefault = { enabled: false, preset: "default" };
+  let videoFilterCustomPresets = [];
+  let videoFilterGlobalDefault = { enabled: false, preset: "default" };
+
+  function normalizeGlobalDefaultConfig(value) {
+    const cfg = value && typeof value === "object" ? value : {};
+    return {
+      enabled: cfg.enabled === true,
+      preset: String(cfg.preset || "default"),
+    };
+  }
+
+  function globalDefaultConfig(type) {
+    return type === "video" ? videoFilterGlobalDefault : mixerGlobalDefault;
+  }
+
+  function globalDefaultBuiltIns(type) {
+    return type === "video"
+      ? VIDEO_FILTER_BUILT_IN_PRESETS
+      : MIXER_BUILT_IN_PRESETS;
+  }
+
+  function globalDefaultCustoms(type) {
+    return type === "video" ? videoFilterCustomPresets : mixerCustomPresets;
+  }
+
+  function globalDefaultStorageKey(type) {
+    return type === "video"
+      ? VIDEO_FILTER_GLOBAL_DEFAULT_KEY
+      : AUDIO_MIXER_GLOBAL_DEFAULT_KEY;
+  }
+
+  function globalDefaultEnabledInput(type) {
+    return type === "video"
+      ? videoFilterGlobalDefaultEnabledInput
+      : mixerGlobalDefaultEnabledInput;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function globalDefaultRoot(type) {
+    return document.querySelector(`[data-global-default-picker="${type}"]`);
+  }
+
+  function globalDefaultOptionExists(type, value) {
+    if (globalDefaultBuiltIns(type).some(([key]) => key === value)) return true;
+    return globalDefaultCustoms(type).some((preset) => preset?.id === value);
+  }
+
+  function globalDefaultOptionLabel(type, value) {
+    const builtIn = globalDefaultBuiltIns(type).find(([key]) => key === value);
+    if (builtIn) return builtIn[1];
+    const custom = globalDefaultCustoms(type).find(
+      (preset) => preset?.id === value,
+    );
+    return custom?.name || globalDefaultBuiltIns(type)[0][1];
+  }
+
+  function closeGlobalDefaultPicker(type) {
+    const root = globalDefaultRoot(type);
+    if (!root) return;
+    const list = root.querySelector("[data-global-default-list]");
+    const trigger = root.querySelector("[data-global-default-trigger]");
+    root.classList.remove("is-open");
+    if (list) list.hidden = true;
+    trigger?.setAttribute("aria-expanded", "false");
+  }
+
+  function closeAllGlobalDefaultPickers(exceptType = "") {
+    ["audio", "video"].forEach((type) => {
+      if (type !== exceptType) closeGlobalDefaultPicker(type);
+    });
+  }
+
+  function positionGlobalDefaultList(root) {
+    const trigger = root.querySelector("[data-global-default-trigger]");
+    const list = root.querySelector("[data-global-default-list]");
+    if (!trigger || !list) return;
+    const rect = trigger.getBoundingClientRect();
+    list.style.left = `${Math.round(rect.left)}px`;
+    list.style.top = `${Math.round(rect.bottom + 4)}px`;
+    list.style.minWidth = `${Math.round(rect.width)}px`;
+    list.style.maxHeight = `${
+      Math.max(140, window.innerHeight - rect.bottom - 16)
+    }px`;
+  }
+
+  function renderGlobalDefaultPicker(type) {
+    const root = globalDefaultRoot(type);
+    if (!root) return;
+    const config = globalDefaultConfig(type);
+    const fallback = globalDefaultBuiltIns(type)[0][0];
+    const selected = globalDefaultOptionExists(type, config.preset)
+      ? config.preset
+      : fallback;
+    config.preset = selected;
+    const label = root.querySelector("[data-global-default-label]");
+    const list = root.querySelector("[data-global-default-list]");
+    const trigger = root.querySelector("[data-global-default-trigger]");
+    if (label) label.textContent = globalDefaultOptionLabel(type, selected);
+    if (!list) return;
+    const optionButton = (value, text, group) => {
+      const selectedAttr = value === selected ? "true" : "false";
+      return (
+        `<li role="presentation"><button type="button" role="option" ` +
+        `aria-selected="${selectedAttr}" ` +
+        `data-global-default-option="${escapeHtml(value)}" ` +
+        `data-global-default-group="${escapeHtml(group)}">` +
+        `${escapeHtml(text)}</button></li>`
+      );
+    };
+    const builtIns = globalDefaultBuiltIns(type)
+      .map(([value, text]) => optionButton(value, text, "built-in"))
+      .join("");
+    const customs = globalDefaultCustoms(type)
+      .filter((preset) => preset?.id && preset?.name)
+      .map((preset) =>
+        optionButton(String(preset.id), String(preset.name), "custom"),
+      )
+      .join("");
+    list.innerHTML =
+      `<li class="settings-popover-group" role="presentation">기본 프리셋</li>${builtIns}` +
+      (customs
+        ? `<li class="settings-popover-group" role="presentation">커스텀 프리셋</li>${customs}`
+        : "");
+    trigger?.setAttribute("data-value", selected);
+    if (root.classList.contains("is-open")) positionGlobalDefaultList(root);
+  }
+
+  function syncGlobalDefaultUI(type) {
+    const config = globalDefaultConfig(type);
+    const input = globalDefaultEnabledInput(type);
+    const root = globalDefaultRoot(type);
+    const trigger = root?.querySelector("[data-global-default-trigger]");
+    if (input) input.checked = config.enabled;
+    if (trigger) trigger.disabled = !config.enabled;
+    if (!config.enabled) closeGlobalDefaultPicker(type);
+    renderGlobalDefaultPicker(type);
+  }
+
+  function saveGlobalDefault(type) {
+    const config = globalDefaultConfig(type);
+    config.enabled = globalDefaultEnabledInput(type)?.checked === true;
+    const root = globalDefaultRoot(type);
+    const value = root
+      ?.querySelector("[data-global-default-trigger]")
+      ?.getAttribute("data-value");
+    config.preset = value || config.preset || "default";
+    renderGlobalDefaultPicker(type);
+    syncGlobalDefaultUI(type);
+    try {
+      chrome.storage?.local?.set({
+        [globalDefaultStorageKey(type)]: { ...config },
+      });
+    } catch {}
+  }
+
+  function openGlobalDefaultPicker(type) {
+    const root = globalDefaultRoot(type);
+    const trigger = root?.querySelector("[data-global-default-trigger]");
+    const list = root?.querySelector("[data-global-default-list]");
+    if (!root || !trigger || !list || trigger.disabled) return;
+    closeAllGlobalDefaultPickers(type);
+    renderGlobalDefaultPicker(type);
+    root.classList.add("is-open");
+    trigger.setAttribute("aria-expanded", "true");
+    list.hidden = false;
+    positionGlobalDefaultList(root);
+  }
+
+  ["audio", "video"].forEach((type) => {
+    const root = globalDefaultRoot(type);
+    root
+      ?.querySelector("[data-global-default-trigger]")
+      ?.addEventListener("click", () => {
+        if (root.classList.contains("is-open")) closeGlobalDefaultPicker(type);
+        else openGlobalDefaultPicker(type);
+      });
+    root
+      ?.querySelector("[data-global-default-list]")
+      ?.addEventListener("click", (event) => {
+        const option = event.target.closest("[data-global-default-option]");
+        if (!option) return;
+        const config = globalDefaultConfig(type);
+        config.preset = option.dataset.globalDefaultOption || "default";
+        closeGlobalDefaultPicker(type);
+        saveGlobalDefault(type);
+      });
+    globalDefaultEnabledInput(type)?.addEventListener("change", () =>
+      saveGlobalDefault(type),
+    );
+  });
+
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-global-default-picker]")) return;
+    closeAllGlobalDefaultPickers();
+  });
+  window.addEventListener("resize", () => closeAllGlobalDefaultPickers());
+  panelsScroll?.addEventListener("scroll", () => closeAllGlobalDefaultPickers());
+
+  async function loadGlobalDefaults() {
+    try {
+      const data = await chrome.storage?.local?.get([
+        AUDIO_MIXER_PRESETS_KEY,
+        AUDIO_MIXER_GLOBAL_DEFAULT_KEY,
+        VIDEO_FILTER_PRESETS_KEY,
+        VIDEO_FILTER_GLOBAL_DEFAULT_KEY,
+      ]);
+      mixerCustomPresets = Array.isArray(data?.[AUDIO_MIXER_PRESETS_KEY])
+        ? data[AUDIO_MIXER_PRESETS_KEY]
+        : [];
+      mixerGlobalDefault = normalizeGlobalDefaultConfig(
+        data?.[AUDIO_MIXER_GLOBAL_DEFAULT_KEY],
+      );
+      videoFilterCustomPresets = Array.isArray(data?.[VIDEO_FILTER_PRESETS_KEY])
+        ? data[VIDEO_FILTER_PRESETS_KEY]
+        : [];
+      videoFilterGlobalDefault = normalizeGlobalDefaultConfig(
+        data?.[VIDEO_FILTER_GLOBAL_DEFAULT_KEY],
+      );
+    } catch {
+      mixerCustomPresets = [];
+      videoFilterCustomPresets = [];
+      mixerGlobalDefault = { enabled: false, preset: "default" };
+      videoFilterGlobalDefault = { enabled: false, preset: "default" };
+    }
+    syncGlobalDefaultUI("audio");
+    syncGlobalDefaultUI("video");
+  }
+
+  loadGlobalDefaults();
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes[AUDIO_MIXER_PRESETS_KEY]) {
+      mixerCustomPresets = Array.isArray(
+        changes[AUDIO_MIXER_PRESETS_KEY].newValue,
+      )
+        ? changes[AUDIO_MIXER_PRESETS_KEY].newValue
+        : [];
+      syncGlobalDefaultUI("audio");
+    }
+    if (changes[AUDIO_MIXER_GLOBAL_DEFAULT_KEY]) {
+      mixerGlobalDefault = normalizeGlobalDefaultConfig(
+        changes[AUDIO_MIXER_GLOBAL_DEFAULT_KEY].newValue,
+      );
+      syncGlobalDefaultUI("audio");
+    }
+    if (changes[VIDEO_FILTER_PRESETS_KEY]) {
+      videoFilterCustomPresets = Array.isArray(
+        changes[VIDEO_FILTER_PRESETS_KEY].newValue,
+      )
+        ? changes[VIDEO_FILTER_PRESETS_KEY].newValue
+        : [];
+      syncGlobalDefaultUI("video");
+    }
+    if (changes[VIDEO_FILTER_GLOBAL_DEFAULT_KEY]) {
+      videoFilterGlobalDefault = normalizeGlobalDefaultConfig(
+        changes[VIDEO_FILTER_GLOBAL_DEFAULT_KEY].newValue,
+      );
+      syncGlobalDefaultUI("video");
+    }
+  });
+
   // ── 비디오 필터 항상 켜기(전역) ───────────────────────────────────────────
   // 체크=항상 켜기(채널 진입 시 자동 활성화). 채널별로 직접 끄면 그 채널은 유지.
   const VIDEO_FILTER_ALWAYS_ON_KEY = "cheeseVideoFilterAlwaysOn";
