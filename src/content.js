@@ -7786,6 +7786,7 @@ function bindChatResizer(handle, aside) {
     chatWidthValue = next;
     setChatAsideWidth(aside, next, maxWidth);
     applyFillScreen(); // 채팅 너비가 바뀌면 영상 폭도 바뀌니 main 높이 재계산
+    applyBannerAdWidth(); // 배너 광고 내부 폭도 실시간으로 채팅 폭에 맞춤
     handle.setAttribute("aria-valuenow", String(next));
     if (Number.isFinite(maxWidth)) {
       handle.setAttribute("aria-valuemax", String(Math.floor(maxWidth)));
@@ -7952,6 +7953,44 @@ function findVodCommentBox() {
   return document.querySelector('div#layout-body [class*="_container_1i0ef_"]');
 }
 
+// 다시보기 영상+채팅 묶음(_player_, 부모가 _wrapper_)을 찾는다. getFillScreenTarget의
+// _player_ 탐색과 동일. 채팅 없는 다시보기 폭 보정에 쓴다.
+function findVodPlayerBox() {
+  const box = document.querySelector("div#layout-body #player_layout");
+  if (!(box instanceof HTMLElement)) return null;
+  let el = box.closest('[class*="_player_"]');
+  while (
+    el &&
+    !String(el.parentElement?.className || "").includes("_wrapper_")
+  ) {
+    const up = el.parentElement?.closest('[class*="_player_"]');
+    if (!up || up === el) break;
+    el = up;
+  }
+  return el instanceof HTMLElement ? el : null;
+}
+
+// 채팅창이 없는 다시보기에서는 치지직이 _player_에 width:calc(100% - 353px)(채팅 폭
+// 353px을 뺀 값)를 인라인으로 남겨, 영상 오른쪽에 빈칸이 생기고 창을 줄이면 영상이
+// 과도하게 작아진다. 영상 더보기 배치/숨김을 적용할 때(채팅 없을 때만) _player_ 폭을
+// 100%로 덮어써 영상이 전체 폭을 쓰게 한다. off/채팅 있을 땐 우리 인라인을 제거해 원복.
+const VOD_PLAYER_WIDTH_ATTR = "data-cheese-vod-player-fullwidth";
+function applyVodPlayerFullWidth(on) {
+  const player = findVodPlayerBox();
+  if (!(player instanceof HTMLElement)) return;
+  const hasChat = !!findResizableChatAside();
+  if (on && !hasChat) {
+    if (player.style.getPropertyValue("width") !== "100%") {
+      player.style.setProperty("width", "100%", "important");
+      player.setAttribute(VOD_PLAYER_WIDTH_ATTR, "1");
+    }
+  } else if (player.hasAttribute(VOD_PLAYER_WIDTH_ATTR)) {
+    // 우리가 건 것만 제거(치지직 인라인은 우리가 attr로 표시한 경우에만 지움).
+    player.style.removeProperty("width");
+    player.removeAttribute(VOD_PLAYER_WIDTH_ATTR);
+  }
+}
+
 // '영상 더보기' 안 '자동 재생 사용 설정' 스위치가 켜져 있으면 끈다(숨기면 못 누르므로).
 // 스위치는 _content_right_ 안 label._switch_ + 내부 input[checkbox]. React 상태라
 // checked 직접 변경이 아닌 클릭으로 토글한다. 한 번만 시도(이미 끄면 no-op).
@@ -8030,6 +8069,7 @@ function applyVodMoreLayout() {
     const css = `div#layout-body [class*="_content_right_"] { display: none !important; }`;
     if (style.textContent !== css) style.textContent = css;
     stopVodMoreObserver(); // 숨김이면 이동 옵저버 불필요
+    applyVodPlayerFullWidth(true); // 채팅 없는 다시보기 폭 보정(빈칸 제거)
     return;
   }
   // 여기 도달 = 숨김이 꺼진 상태. 다음에 다시 숨길 때 자동 재생을 또 끌 수 있도록
@@ -8050,10 +8090,12 @@ function applyVodMoreLayout() {
     if (style.textContent !== css) style.textContent = css;
     moveVodMoreBelow();
     ensureVodMoreObserver();
+    applyVodPlayerFullWidth(true); // 채팅 없는 다시보기 폭 보정(빈칸 제거)
   } else {
     style?.remove(); // 아래배치/숨김 모두 해제 → 스타일 제거
     stopVodMoreObserver();
     restoreVodMorePosition(); // 이동했던 _content_right_를 원위치로 복원
+    applyVodPlayerFullWidth(false); // 폭 보정 원복
   }
 }
 
@@ -8109,8 +8151,12 @@ function applyChatFontScale() {
 // (배지 모아 챗도 placeChatOnLeft && !stackedLayout 조건).
 function applyChatLeftClass() {
   const aside = findResizableChatAside();
+  // 채팅창이 없는 다시보기(vod-aside 없음)에서는 왼쪽 배치가 의미 없다. 그런데도
+  // 클래스를 걸면 빈 margin-left 등이 붙으므로 채팅창이 실제로 있을 때만 적용한다.
   const on =
-    chatFeatureActive("chatLeftPosition") && !isChatStackedLayout(aside);
+    chatFeatureActive("chatLeftPosition") &&
+    !!aside &&
+    !isChatStackedLayout(aside);
   document.documentElement.classList.toggle("cheese-chat-left-position", on);
 }
 
@@ -8256,7 +8302,91 @@ function applyChatTweaks() {
   applyChatLeftClass();
   applyChatAutoHideClass();
   applyChatFontScale();
+  applyBannerAdWidth(); // 채팅창 위 배너 광고 내부 폭을 채팅 폭에 맞춤
   startChatObserver(); // moa on/off·새 채팅 DOM 변화를 계속 추적
+}
+
+// 채팅창 위 배너 광고(_banner_) iframe 내부 광고 콘텐츠(.content_wrap 등)는 max-width
+// 657px 등으로 고정이라, 채팅창을 그보다 좁게 줄이면 채팅창 밖으로 튀어나온다. 배너
+// iframe은 same-origin이라 내부 문서에 <style>을 주입해 max-width를 iframe(=채팅) 폭에
+// 맞춘다. iframe 내부 광고 로드는 메인 DOM 변이를 안 일으켜 초기 1회 호출 때 아직
+// 준비 전일 수 있으므로, iframe에 load 리스너를 한 번 걸어 준비되면 재주입한다.
+const BANNER_AD_STYLE_ID = "cheese-banner-ad-width";
+const BANNER_AD_BOUND_ATTR = "data-cheese-banner-bound";
+
+// iframe 내부 문서에 폭 제한 <style>을 주입(준비됐을 때만). 실패해도 무해.
+function injectBannerAdStyle(iframe, width) {
+  if (!(iframe instanceof HTMLIFrameElement) || !(width > 0)) return;
+  let doc = null;
+  try {
+    doc = iframe.contentDocument; // same-origin이면 접근 가능
+  } catch {
+    return; // 교차 출처면 포기
+  }
+  if (!doc || !doc.head) return;
+  const css =
+    `.content_wrap { max-width: ${width}px !important; }` +
+    `html, body { max-width: ${width}px !important; overflow-x: hidden !important; }`;
+  let style = doc.getElementById(BANNER_AD_STYLE_ID);
+  if (!style) {
+    style = doc.createElement("style");
+    style.id = BANNER_AD_STYLE_ID;
+    doc.head.appendChild(style);
+  }
+  if (style.textContent !== css) style.textContent = css;
+}
+
+let bannerAdInjectRaf = 0;
+function applyBannerAdWidth() {
+  const banner = document.querySelector('div#layout-body [class*="_banner_"]');
+  if (!(banner instanceof HTMLElement)) return;
+  const w = Math.round(banner.getBoundingClientRect().width);
+  if (!(w > 0)) return;
+  const iframe = banner.querySelector('iframe[title="AD"], iframe[id*="banner"]');
+  if (!(iframe instanceof HTMLIFrameElement)) return;
+  // iframe에 load 리스너를 1회만 부착: 광고가 로드/재렌더될 때마다 현재 배너 폭으로
+  // 다시 주입한다.
+  if (!iframe.hasAttribute(BANNER_AD_BOUND_ATTR)) {
+    iframe.setAttribute(BANNER_AD_BOUND_ATTR, "1");
+    iframe.addEventListener("load", () => {
+      const b = document.querySelector('div#layout-body [class*="_banner_"]');
+      const bw = b ? Math.round(b.getBoundingClientRect().width) : 0;
+      injectBannerAdStyle(iframe, bw);
+    });
+  }
+  // 즉시 주입 시도 + 내부 문서가 아직 준비 전이면(load 이벤트를 이미 놓쳤거나 아직
+  // 로드 중) 짧게 폴링해 준비되는 순간 주입한다. 드래그 없이 초기 상태에서도
+  // 확실히 적용되게 한다(load 리스너만으론 타이밍에 따라 놓치던 문제).
+  injectBannerAdStyle(iframe, w);
+  scheduleBannerAdInject(iframe);
+}
+
+// iframe 내부 문서가 준비될 때까지 짧게 폴링해 주입(최대 ~3초). 준비되면 즉시 종료.
+function scheduleBannerAdInject(iframe) {
+  if (bannerAdInjectRaf) return;
+  let tries = 0;
+  const tick = () => {
+    bannerAdInjectRaf = 0;
+    tries += 1;
+    if (!(iframe instanceof HTMLIFrameElement) || !iframe.isConnected) return;
+    const b = document.querySelector('div#layout-body [class*="_banner_"]');
+    const bw = b ? Math.round(b.getBoundingClientRect().width) : 0;
+    let ready = false;
+    try {
+      ready = !!iframe.contentDocument?.head;
+    } catch {
+      return; // 교차 출처 → 폴링 무의미
+    }
+    if (ready && bw > 0) {
+      injectBannerAdStyle(iframe, bw);
+      // 준비됐어도 광고가 head를 나중에 교체할 수 있어 한두 번 더 확인 후 종료.
+      if (tries >= 3) return;
+    }
+    if (tries < 20) {
+      bannerAdInjectRaf = window.setTimeout(tick, 150);
+    }
+  };
+  bannerAdInjectRaf = window.setTimeout(tick, 150);
 }
 
 // 숨김 마커를 실제 display:none 으로 만드는 <style>(전역 1개).
@@ -8302,6 +8432,33 @@ function updateChatTweakStyle() {
     html.cheese-chat-left-position div#layout-body [class*="_content_left_"] > [class*="_details_"],
     html.cheese-chat-left-position div#layout-body [class*="_content_left_"] > [class*="_container_1nl77_"] {
       margin-left: var(--cheese-chat-resized-width, 353px) !important;
+    }
+    /* 채팅창 위 배너 광고(_banner_)는 position:absolute; right:0; max-width:353px 라
+       왼쪽 배치를 해도 오른쪽에 남는다. 왼쪽 배치 시 좌측으로 옮기고, 채팅 너비를
+       조절했으면 그 폭(--cheese-chat-resized-width)에 max-width를 맞춘다. */
+    html.cheese-chat-left-position div#layout-body [class*="_banner_"] {
+      right: auto !important;
+      left: 0 !important;
+      max-width: var(--cheese-chat-resized-width, 353px) !important;
+    }
+    /* 오른쪽(기본) 배치라도 채팅 너비를 조절했으면 배너 폭을 조절된 채팅 폭에 맞춘다
+       (변수가 없으면=미조절 규칙 무효 → 치지직 기본 353px 유지). */
+    html.cheese-chat-width-resize-enabled:not(.cheese-chat-left-position) div#layout-body [class*="_banner_"] {
+      max-width: var(--cheese-chat-resized-width, 353px) !important;
+    }
+    /* 배너 내부 광고(iframe)가 배너 폭보다 넓어 채팅창 밖으로 튀어나오는 것을 메인
+       문서 CSS로 막는다(iframe 내부 스타일 주입은 로드 타이밍에 취약 → 이 규칙이
+       타이밍 무관하게 바깥에서 잘라낸다). 배너 기능이 켜졌을 때(왼쪽 배치 또는
+       너비 조절 활성)만 적용해 회귀를 피한다. */
+    html.cheese-chat-left-position div#layout-body [class*="_banner_"],
+    html.cheese-chat-left-position div#layout-body [class*="_banner_"] [class*="_content_"],
+    html.cheese-chat-width-resize-enabled div#layout-body [class*="_banner_"],
+    html.cheese-chat-width-resize-enabled div#layout-body [class*="_banner_"] [class*="_content_"] {
+      overflow: hidden !important;
+    }
+    html.cheese-chat-left-position div#layout-body [class*="_banner_"] iframe,
+    html.cheese-chat-width-resize-enabled div#layout-body [class*="_banner_"] iframe {
+      max-width: 100% !important;
     }
     /* 왼쪽 배치 시 뷰포트 고정형 프로필 카드가 오른쪽에 뜨는 것을 좌측으로 보정
        (인라인 _is_bottom_/_is_top_ 변형은 자체 위치라 제외). */
