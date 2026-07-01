@@ -23,6 +23,7 @@
   let mixerAlwaysOn = false;
   let wideScreenAuto = false; // 넓은 화면(viewmode) 진입 시 자동 적용(전역)
   let liveSeekBarOn = true; // 라이브 되감기 바(seekable 표시+드래그 seek) 표시(전역, 기본 ON)
+  let forceFullTick = false; // 다음 tick에서 fast-path를 건너뛰고 full로 돌린다(플래그 변경 등)
   let userGestureSeen = false;
   window.addEventListener("message", (e) => {
     if (e.source !== window || e.data?.source !== "cheese-feature-flags") return;
@@ -52,6 +53,9 @@
       if (changed && typeof refreshSeekButtonLabels === "function")
         refreshSeekButtonLabels();
     }
+    // 플래그가 바뀌었으니 다음 tick은 fast-path를 건너뛰고 반드시 full로 돌려
+    // 버튼 숨김/표시를 즉시 반영한다(안 그러면 컨트롤 재렌더가 있을 때까지 지연됨).
+    forceFullTick = true;
     if (typeof tick === "function") tick();
     if (typeof maybeAutoEnableMixer === "function") maybeAutoEnableMixer();
   });
@@ -4814,6 +4818,53 @@
     document.addEventListener("keydown", onVolumeWheelOrKey, true);
   }
 
+  // tick fast-path 판정: 같은 페이지에서 우리 버튼·효과가 이미 모두 안정 상태인가.
+  // 안정이면 tick의 무거운 ensure들을 건너뛴다(라이브 채팅 변이로 자주 깨어나므로).
+  // 하나라도 애매하면 false를 반환해 full tick으로 보정한다(버튼 누락 방지).
+  function isTickStable() {
+    const player = findPlayer();
+    if (!player) return false; // 플레이어 없으면 full tick(자동활성화 등 처리 필요)
+    const controls = player.querySelector(".pzp-pc__bottom-buttons-right");
+    if (!controls) return false;
+    const isLive = location.pathname.startsWith("/live/");
+    // 켜진 기능의 버튼이 컨트롤 바에 실제로 있어야 안정. (숨김이면 없어야 안정.)
+    const has = (cls) => !!controls.querySelector(`.${cls}`);
+    // 오디오 믹서
+    if (featureFlags.audioMixer) {
+      if (document.getElementById(PANEL_ID) || has(BUTTON_CLASS)) return false;
+    } else {
+      if (!has(BUTTON_CLASS)) return false;
+      // 믹서가 켜졌는데(state.enabled) 그래프가 안 붙었으면 보정 필요.
+      if (state.enabled && !audio.connected) return false;
+      if (!state.enabled && audio.connected) return false;
+    }
+    // 스트림 정보
+    if (featureFlags.streamStats ? has(STATS_BUTTON_CLASS) : !has(STATS_BUTTON_CLASS))
+      return false;
+    // 탭 음소거
+    if (featureFlags.tabMute ? has(TAB_MUTE_BUTTON_CLASS) : !has(TAB_MUTE_BUTTON_CLASS))
+      return false;
+    // 라이브 전용: 따라잡기 / 되감기 버튼
+    if (isLive) {
+      if (featureFlags.liveSync ? has(SYNC_BUTTON_CLASS) : !has(SYNC_BUTTON_CLASS))
+        return false;
+      if (
+        featureFlags.liveRewind
+          ? has(REWIND_BUTTON_CLASS)
+          : !has(REWIND_BUTTON_CLASS)
+      )
+        return false;
+    }
+    // 자동 넓은 화면 적용이 아직 남아 있으면(이 미디어에 미적용) full tick 필요.
+    if (wideScreenAuto && wideScreenAppliedForPage !== currentPageKey) return false;
+    // '항상 켜기'가 켜졌는데 아직 자동 활성화 전이면 full tick.
+    if (mixerAlwaysOn && userGestureSeen && stateLoaded && !audio.connected &&
+        !state.userDisabled && !featureFlags.audioMixer && !graphConflict) {
+      return false;
+    }
+    return true;
+  }
+
   function tick() {
     const pageKey = getPageKey();
     if (!pageKey) {
@@ -4873,6 +4924,14 @@
       graphConflict = false; // 충돌은 video별 조건 → 새 영상에선 다시 시도 가능
       clearGraphRetryBlock();
       resolveAndLoadChannel(pageKey);
+    } else if (forceFullTick) {
+      // 플래그 변경 직후 등 — 이번엔 fast-path를 건너뛰고 full로 처리한다.
+      forceFullTick = false;
+    } else if (isTickStable()) {
+      // 미디어 전환이 아니고, 우리 버튼·효과가 모두 이미 안정 상태면 무거운 ensure
+      // 들(findPlayer/querySelector 반복)을 건너뛴다. '할 일이 있을 때만' 일한다.
+      // 라이브 채팅 변이로 tick이 자주 깨어나도 대부분 여기서 빠진다.
+      return;
     }
     // 팝업 기능 숨김 플래그 반영. 숨김이면 버튼 제거 + 효과 off(믹서/따라잡기).
     if (featureFlags.audioMixer) {
@@ -4988,7 +5047,20 @@
     }
   }
 
-  const observer = new MutationObserver(() => tick());
+  // documentElement 전체(subtree childList)를 감시하므로 라이브 채팅·재생 UI 변이가
+  // 초당 수십~수백 번 콜백을 부른다. tick은 findPlayer/querySelector를 여러 번 도는
+  // 무거운 작업이라, 매 변이마다 실행하면 페이지가 버벅인다. 짧은 디바운스로 변이가
+  // 몰려도 '80ms에 1회'만 tick을 돌린다(우리 버튼 주입이 유발한 변이도 같은 창에
+  // 흡수돼 재진입 폭주가 없다). content.js init(120ms 디바운스)과 같은 접근.
+  let tickTimer = 0;
+  function scheduleTick() {
+    if (tickTimer) return;
+    tickTimer = window.setTimeout(() => {
+      tickTimer = 0;
+      tick();
+    }, 80);
+  }
+  const observer = new MutationObserver(scheduleTick);
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
